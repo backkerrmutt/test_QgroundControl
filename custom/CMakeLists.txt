@@ -51,8 +51,8 @@ list(APPEND CUSTOM_RESOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/qgroundcontrol.qrc
     ${CMAKE_CURRENT_SOURCE_DIR}/custom.qrc
 )
-set(QGC_RESOURCES ${QGC_RESOURCES} ${CUSTOM_RESOURCES} CACHE STRING "Paths to .qrc Resources" FORCE)
 
+set(QGC_RESOURCES ${QGC_RESOURCES} ${CUSTOM_RESOURCES} CACHE STRING "Paths to .qrc Resources" FORCE)
 set(QML_IMPORT_PATH ${QML_IMPORT_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/res" CACHE STRING "Extra qml import paths" FORCE)
 
 set(CUSTOM_SOURCES
@@ -79,22 +79,26 @@ set(CUSTOM_DIRECTORIES
     CACHE INTERNAL "" FORCE
 )
 
-# file(GLOB_RECURSE QML_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/res/*.qml)
-# file(GLOB QML_RESOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/res/Images/*.*)
-# qt_add_qml_module(CustomPlugin
-#     URI QGroundControl.CustomPlugin
-#     VERSION 1.0
-#     RESOURCE_PREFIX "/"
-#     QML_FILES ${QML_SOURCES}
-#     RESOURCES ${QML_RESOURCES}
-#     OUTPUT_TARGETS CustomPlugin_targets
-#     IMPORT_PATH ${QT_QML_OUTPUT_DIRECTORY}
-#     IMPORTS
-#         QtQuick
-#         QtQuick.Controls
-#         QtQuick.Layouts
-#         QGroundControl
-#         QGroundControl.Controls
-#         QGroundControl.Palette
-#         QGroundControl.ScreenTools
-# )
+# ==========================================
+# 🎮 Custom Joystick Support
+# ==========================================
+message(STATUS "Adding Custom JoystickPlugin Support")
+
+# เพิ่ม Joystick sources
+list(APPEND CUSTOM_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickConfigController.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickConfigController.h
+)
+
+# เพิ่ม Joystick directory
+list(APPEND CUSTOM_DIRECTORIES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin
+)
+
+# อัพเดท cache
+set(CUSTOM_SOURCES ${CUSTOM_SOURCES} CACHE INTERNAL "" FORCE)
+set(CUSTOM_DIRECTORIES ${CUSTOM_DIRECTORIES} CACHE INTERNAL "" FORCE)
+
+message(STATUS "Custom JoystickPlugin: ${CUSTOM_SOURCES}")

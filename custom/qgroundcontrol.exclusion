@@ -1,4 +1,6 @@
         <file alias="QGroundControl/FlightDisplay/CustomGuidedActionsController.qml">src/FlightDisplay/CustomGuidedActionsController.qml</file>
         <file alias="QGroundControl/FlightDisplay/FlyViewCustomLayer.qml">src/FlightDisplay/FlyViewCustomLayer.qml</file>
         <file alias="QGroundControl/FlightDisplay/FlyViewToolStripActionList.qml">src/FlightDisplay/FlyViewToolStripActionList.qml</file>
+        <file alias="JoystickConfigButtons.qml">src/Vehicle/VehicleSetup/JoystickConfigButtons.qml</file>
+        <file alias="JoystickConfig.qml">src/Vehicle/VehicleSetup/JoystickConfig.qml</file>
 

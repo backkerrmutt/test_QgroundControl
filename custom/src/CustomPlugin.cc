@@ -1,15 +1,5 @@
-/****************************************************************************
- *
- * (c) 2009-2019 QGROUNDCONTROL PROJECT <http://www.qgroundcontrol.org>
- *
- * QGroundControl is licensed according to the terms in the file
- * COPYING.md in the root of the source code directory.
- *
- *   @brief Custom QGCCorePlugin Implementation
- *   @author Gus Grubba <gus@auterion.com>
- */
-
 #include "CustomPlugin.h"
+
 #include "QmlComponentInfo.h"
 #include "QGCPalette.h"
 #include "QGCMAVLink.h"
@@ -19,32 +9,45 @@
 #include <QtCore/qapplicationstatic.h>
 #include <QtQml/QQmlApplicationEngine>
 
-QGC_LOGGING_CATEGORY(CustomLog, "gcs.custom.customplugin")
+// ✅ สำคัญ: register QML types
+#include <QtQml/qqml.h>
+#include "CustomJoystickConfigController.h"
+#include "AxisActionRouter.h"
 
+
+QGC_LOGGING_CATEGORY(CustomLog, "gcs.custom.customplugin")
 Q_APPLICATION_STATIC(CustomPlugin, _customPluginInstance);
 
+
+QObject* CustomPlugin::axisActionRouter() const
+{
+    // return axisActionRouter;
+    return static_cast<QObject*>(_axisActionRouter);
+}
+
+
+
+//-----------------------------------------------------------------------------
 CustomFlyViewOptions::CustomFlyViewOptions(CustomOptions* options, QObject* parent)
     : QGCFlyViewOptions(options, parent)
 {
-
 }
 
-// This custom build does not support conecting multiple vehicles to it. This in turn simplifies various parts of the QGC ui.
 bool CustomFlyViewOptions::showMultiVehicleList(void) const
 {
     return false;
 }
 
-// This custom build has it's own custom instrument panel. Don't show regular one.
 bool CustomFlyViewOptions::showInstrumentPanel(void) const
 {
     return false;
 }
 
+//-----------------------------------------------------------------------------
 CustomOptions::CustomOptions(CustomPlugin *plugin, QObject *parent)
     : QGCOptions(parent)
-    , _plugin(plugin)
-    , _flyViewOptions(new CustomFlyViewOptions(this, this))
+      , _plugin(plugin)
+      , _flyViewOptions(new CustomFlyViewOptions(this, this))
 {
     Q_CHECK_PTR(_plugin);
 }
@@ -54,27 +57,54 @@ QGCFlyViewOptions* CustomOptions::flyViewOptions(void) const
     return _flyViewOptions;
 }
 
-// Firmware upgrade page is only shown in Advanced Mode.
-bool CustomOptions::showFirmwareUpgrade() const
+bool CustomOptions::showFirmwareUpgrade(void) const
 {
     return _plugin->showAdvancedUI();
 }
 
-// Normal QGC needs to work with an ESP8266 WiFi thing which is remarkably crappy. This in turns causes PX4 Pro calibration to fail
-// quite often. There is a warning in regular QGC about this. Overriding the and returning true means that your custom vehicle has
-// a reliable WiFi connection so don't show that warning.
 bool CustomOptions::wifiReliableForCalibration(void) const
 {
     return true;
 }
 
+//-----------------------------------------------------------------------------
 CustomPlugin::CustomPlugin(QObject *parent)
     : QGCCorePlugin(parent)
-    , _options(new CustomOptions(this, this))
+      , _options(new CustomOptions(this, this))
 {
+
+    CustomPlugin::registerQmlTypes();
+
+    _axisActionRouter = new AxisActionRouter(this);
+
+
     _showAdvancedUI = false;
-    connect(this, &QGCCorePlugin::showAdvancedUIChanged, this, &CustomPlugin::_advancedChanged);
+    connect(this, &QGCCorePlugin::showAdvancedUIChanged,
+            this, &CustomPlugin::_advancedChanged);
 }
+
+void CustomPlugin::registerQmlTypes()
+{
+    // กันการ register ซ้ำ
+    static bool _registered = false;
+    if (_registered) {
+        return;
+    }
+    _registered = true;
+
+            // เรียกของ base (optional แต่แนะนำ)
+    QGCCorePlugin::registerQmlTypes();
+
+            // ให้ QML เรียก controller custom ได้
+    qmlRegisterType<CustomJoystickConfigController>(
+        "QGroundControl.Controllers", 1, 0, "CustomJoystickConfigController");
+
+            // ให้ QML มองเห็น type AxisActionRouter แต่ห้าม new เอง
+    qmlRegisterUncreatableType<AxisActionRouter>(
+        "QGroundControl.Controllers", 1, 0, "AxisActionRouter",
+        "AxisActionRouter is exposed by CustomJoystickConfigController");
+}
+
 
 CustomPlugin::~CustomPlugin()
 {
@@ -87,7 +117,6 @@ QGCCorePlugin *CustomPlugin::instance()
 
 void CustomPlugin::_advancedChanged(bool changed)
 {
-    // Firmware Upgrade page is only show in Advanced mode
     emit _options->showFirmwareUpgradeChanged(changed);
 }
 
@@ -95,15 +124,14 @@ void CustomPlugin::_advancedChanged(bool changed)
 void CustomPlugin::_addSettingsEntry(const QString& title, const char* qmlFile, const char* iconFile)
 {
     Q_CHECK_PTR(qmlFile);
-    // 'this' instance will take ownership on the QmlComponentInfo instance
     _customSettingsList.append(QVariant::fromValue(
         new QmlComponentInfo(title,
-                QUrl::fromUserInput(qmlFile),
-                iconFile == nullptr ? QUrl() : QUrl::fromUserInput(iconFile),
-                this)));
+                             QUrl::fromUserInput(qmlFile),
+                             iconFile == nullptr ? QUrl() : QUrl::fromUserInput(iconFile),
+                             this)));
 }
 
-QGCOptions* CustomPlugin::options()
+QGCOptions* CustomPlugin::options(void)
 {
     return _options;
 }
@@ -120,22 +148,17 @@ QString CustomPlugin::brandImageOutdoor(void) const
 
 bool CustomPlugin::overrideSettingsGroupVisibility(const QString &name)
 {
-    // We have set up our own specific brand imaging. Hide the brand image settings such that the end user
-    // can't change it.
     if (name == BrandImageSettings::name) {
         return false;
     }
     return true;
 }
 
-// This allows you to override/hide QGC Application settings
 bool CustomPlugin::adjustSettingMetaData(const QString& settingsGroup, FactMetaData& metaData)
 {
     bool parentResult = QGCCorePlugin::adjustSettingMetaData(settingsGroup, metaData);
 
     if (settingsGroup == AppSettings::settingsGroup) {
-        // This tells QGC than when you are creating Plans while not connected to a vehicle
-        // the specific firmware/vehicle the plan is for.
         if (metaData.name() == AppSettings::offlineEditingFirmwareClassName) {
             metaData.setRawDefaultValue(QGCMAVLink::FirmwareClassPX4);
             return false;
@@ -339,7 +362,6 @@ void CustomPlugin::paletteOverride(const QString &colorName, QGCPalette::Palette
     }
 }
 
-// We override this so we can get access to QQmlApplicationEngine and use it to register our qml module
 QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
 {
     QQmlApplicationEngine* qmlEngine = QGCCorePlugin::createQmlApplicationEngine(parent);

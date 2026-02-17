@@ -47,6 +47,7 @@
 		<file alias="takeoff.svg">../resources/takeoff.svg</file>
 		<file alias="terrain.svg">../resources/terrain.svg</file>
 		<file alias="TrashDelete.svg">../resources/TrashDelete.svg</file>
+		<file alias="VehicleMessages.png">../resources/VehicleMessages.png</file>
 		<file alias="waves.svg">../resources/waves.svg</file>
 		<file alias="wind-guru.svg">../resources/wind-guru.svg</file>
 		<file alias="wind-rose.svg">../resources/wind-rose.svg</file>
@@ -98,9 +99,6 @@
 		<file alias="radioYawLeft.png">../resources/calibration/mode2/radioYawLeft.png</file>
 		<file alias="radioYawRight.png">../resources/calibration/mode2/radioYawRight.png</file>
 	</qresource>
-	<qresource prefix="/db/mapping/joystick">
-		<file alias="gamecontrollerdb.txt">../resources/SDL_GameControllerDB/gamecontrollerdb.txt</file>
-	</qresource>
 	<qresource prefix="/res/audio">
 		<file alias="Alert">../resources/audio/alert.wav</file>
 	</qresource>
@@ -109,5 +107,10 @@
 	</qresource>
 	<qresource prefix="/gimbal">
 		<file alias="payload.svg">../resources/gimbal/payload.svg</file>
+	</qresource>
+	<qresource prefix="/gcscontrolIndicator">
+		<file alias="gcscontrol_device.svg">../resources/gcscontrolIndicator/gcscontrol_device.svg</file>
+		<file alias="gcscontrol_gcs.svg">../resources/gcscontrolIndicator/gcscontrol_gcs.svg</file>
+		<file alias="gcscontrol_line.svg">../resources/gcscontrolIndicator/gcscontrol_line.svg</file>
 	</qresource>
 </RCC>
