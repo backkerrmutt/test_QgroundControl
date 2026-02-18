@@ -78,7 +78,8 @@ CustomPlugin::CustomPlugin(QObject *parent)
     _axisActionRouter = new AxisActionRouter(this);
 
 
-    _showAdvancedUI = false;
+    // _showAdvancedUI = false;
+    _showAdvancedUI = true;
     connect(this, &QGCCorePlugin::showAdvancedUIChanged,
             this, &CustomPlugin::_advancedChanged);
 }

@@ -22,7 +22,7 @@
 
 QGC_LOGGING_CATEGORY(AxisActLog, "qgc.custom.axisactions")
 
-// -------------------- small helpers --------------------
+// -------------------- small helpers (ต้องอยู่ก่อน member funcs ที่เรียกใช้) --------------------
 static bool _isNoAction(QString a)
 {
     a = a.trimmed();
@@ -76,7 +76,6 @@ static QAction* _extractAnyQAction(QObject* obj)
 
     if (auto* qa = qobject_cast<QAction*>(obj)) return qa;
 
-            // common property names
     static const char* kProps[] = { "action", "qAction", "qtAction" };
     for (const char* p : kProps) {
         const QVariant v = obj->property(p);
@@ -89,7 +88,6 @@ static QAction* _extractAnyQAction(QObject* obj)
         }
     }
 
-            // scan all readable properties
     const QMetaObject* mo = obj->metaObject();
     for (int i = 0; i < mo->propertyCount(); ++i) {
         const QMetaProperty p = mo->property(i);
@@ -114,6 +112,50 @@ AxisActionRouter::AxisActionRouter(QObject* parent)
     : QObject(parent)
 {
     _calHint = tr("Pick an axis, press Start Calibrate, move the switch through all positions, then Stop.");
+}
+
+// -------------------- UI helpers (Right side cards) --------------------
+int AxisActionRouter::positionsForAxis(int axis) const
+{
+    for (const auto& m : _stored) {
+        if (m.axis == axis) {
+            return _positionsCount(m.centers, m.thresholds);
+        }
+    }
+    return 0;
+}
+
+QStringList AxisActionRouter::actionsForAxis(int axis) const
+{
+    for (const auto& m : _stored) {
+        if (m.axis == axis) {
+            return m.actions;
+        }
+    }
+    return {};
+}
+
+void AxisActionRouter::setActionForAxis(int axis, int posIndex, const QString& action)
+{
+    if (posIndex < 0) return;
+
+    const QString a = _normalizeStored(action);
+
+    StoredMapping* m = _findMapping(axis);
+    if (!m) return;
+
+    const int positions = _positionsCount(m->centers, m->thresholds);
+    while (m->actions.size() < positions) m->actions << "No Action";
+    if (m->actions.size() > positions) m->actions = m->actions.mid(0, positions);
+
+    if (posIndex >= m->actions.size()) return;
+    if (m->actions[posIndex] == a) return;
+
+    m->actions[posIndex] = a;
+
+    _rebuildSummaries();
+    _saveToSettings();
+    emit mappingsChanged();
 }
 
 // -------------------- properties --------------------
@@ -233,7 +275,6 @@ void AxisActionRouter::_loadFromSettings()
         while (m.actions.size() < positions) m.actions << "No Action";
         if (m.actions.size() > positions) m.actions = m.actions.mid(0, positions);
 
-                // runtime init
         m.stableIndex = -999;
         m.pendingIndex = -999;
         m.pendingSinceMs = 0;
@@ -241,7 +282,6 @@ void AxisActionRouter::_loadFromSettings()
 
         if (m.axis < 0 || m.centers.isEmpty()) continue;
 
-                // de-dup by axis
         int found = -1;
         for (int i = 0; i < _stored.size(); ++i) {
             if (_stored[i].axis == m.axis) { found = i; break; }
@@ -252,8 +292,11 @@ void AxisActionRouter::_loadFromSettings()
 
     _rebuildSummaries();
     emit mappingsChanged();
-
     _applyMappingToUiForAxis(_selectedAxis);
+
+    // ✅ NEW: refresh active pos snapshot for UI
+    emitActivePositionSnapshot();
+
 }
 
 void AxisActionRouter::_rebuildSummaries()
@@ -304,8 +347,6 @@ void AxisActionRouter::setJoystick(QObject* joystickObj)
 
     _jsKey = _makeJoystickKey(_js);
     _loadFromSettings();
-
-            // ไม่ต้อง emit mappingsChanged ซ้ำ (ใน _loadFromSettings มีแล้ว)
 }
 
 void AxisActionRouter::setVehicle(QObject* vehicleObj)
@@ -329,18 +370,13 @@ void AxisActionRouter::_attach(Joystick* js)
             this, &AxisActionRouter::_onAxisValueChanged,
             Qt::QueuedConnection);
 
-            // กันค้างกรณี joystick ถูกลบตอนถอดอุปกรณ์/สลับ
+            // กันค้างกรณี joystick ถูกลบตอนถอดอุปกรณ์
     connect(_js, &QObject::destroyed, this, [this](QObject*) {
         _saveToSettings();
         _detach();
         _jsKey.clear();
         emit mappingsChanged();
     }, Qt::QueuedConnection);
-
-            // optional debug
-            // connect(_js, &Joystick::rawButtonPressedChanged,
-            //         this, &AxisActionRouter::_onRawButtonPressedChanged,
-            //         Qt::QueuedConnection);
 }
 
 void AxisActionRouter::_detach()
@@ -422,7 +458,8 @@ void AxisActionRouter::startCalibration()
 
     _calCenters.clear();
     _calThresholds.clear();
-    _pendingActions.clear();
+
+    _pendingActions.clear(); // จะถูกสร้างใหม่ตอน finalize
 
     _lastStableCommitMs = 0;
     _lastStableCommitV  = 999.f;
@@ -430,7 +467,6 @@ void AxisActionRouter::startCalibration()
     _calHint = tr("Calibrating… Move the switch to each position and pause briefly, then press Stop.");
     emit calibratingChanged();
     emit calibrationChanged();
-    emit pendingActionsChanged();
 }
 
 void AxisActionRouter::stopCalibration()
@@ -440,9 +476,61 @@ void AxisActionRouter::stopCalibration()
 
     _finalizeCalibrationFromSamples();
 
+            // ถ้าจับ stable ไม่ได้ -> แค่แจ้ง hint
+    if (_calCenters.isEmpty()) {
+        emit calibratingChanged();
+        emit calibrationChanged();
+        return;
+    }
+
+            // ✅ Auto-save zones into mapping (ไม่มีปุ่ม Add/Save แล้ว)
+    StoredMapping* m = _findMapping(_selectedAxis);
+    if (!m) {
+        StoredMapping nm;
+        nm.axis       = _selectedAxis;
+        nm.centers    = _calCenters;
+        nm.thresholds = _calThresholds;
+        nm.actions    = _pendingActions;
+
+        const int positions = _positionsCount(nm.centers, nm.thresholds);
+        while (nm.actions.size() < positions) nm.actions << "No Action";
+        if (nm.actions.size() > positions) nm.actions = nm.actions.mid(0, positions);
+
+        nm.stableIndex = -999;
+        nm.pendingIndex = -999;
+        nm.pendingSinceMs = 0;
+        nm.lastFireMs = 0;
+
+        _stored.push_back(nm);
+    } else {
+        const QStringList oldActions = m->actions;
+
+        m->centers    = _calCenters;
+        m->thresholds = _calThresholds;
+
+        const int positions = _positionsCount(m->centers, m->thresholds);
+        m->actions = oldActions;
+        while (m->actions.size() < positions) m->actions << "No Action";
+        if (m->actions.size() > positions) m->actions = m->actions.mid(0, positions);
+
+        m->stableIndex = -999;
+        m->pendingIndex = -999;
+        m->pendingSinceMs = 0;
+        m->lastFireMs = 0;
+    }
+
+    _rebuildSummaries();
+    _saveToSettings();
+    emit mappingsChanged();
+
+            // refresh UI state for selected axis
+    _applyMappingToUiForAxis(_selectedAxis);
+
+            // override hint ให้ชัดเจน
+    _calHint = tr("Calibration saved for Axis %1. Assign actions on the right.").arg(_selectedAxis);
+
     emit calibratingChanged();
     emit calibrationChanged();
-    emit pendingActionsChanged();
 }
 
 void AxisActionRouter::clearCalibration()
@@ -450,16 +538,20 @@ void AxisActionRouter::clearCalibration()
     _calibrating = false;
     _win.clear();
     _stableSamples.clear();
+
     _calCenters.clear();
     _calThresholds.clear();
     _pendingActions.clear();
 
+    _lastStableCommitMs = 0;
+    _lastStableCommitV  = 999.f;
+
     _calHint = tr("Cleared. Pick an axis, Start Calibrate, move through positions, then Stop.");
     emit calibratingChanged();
     emit calibrationChanged();
-    emit pendingActionsChanged();
 }
 
+// ---- calibration helpers ----
 void AxisActionRouter::_calibFeed(float v, qint64 nowMs)
 {
     const qint64 windowMs        = 350;
@@ -543,6 +635,7 @@ void AxisActionRouter::_finalizeCalibrationFromSamples()
     _calCenters = centers;
     _calThresholds = thresholds;
 
+            // default actions หลัง finalize
     _pendingActions.clear();
     const int pos = _positionsCount(_calCenters, _calThresholds);
     for (int i = 0; i < pos; ++i) _pendingActions << "No Action";
@@ -550,18 +643,6 @@ void AxisActionRouter::_finalizeCalibrationFromSamples()
     if (_calCenters.size() == 2)      _calHint = tr("Detected 2 positions (2-pos).");
     else if (_calCenters.size() == 3) _calHint = tr("Detected 3 positions (3-pos).");
     else                              _calHint = tr("Detected %1 positions (zones).").arg(_calCenters.size());
-}
-
-// -------------------- pending actions --------------------
-void AxisActionRouter::setPendingAction(int posIndex, const QString& action)
-{
-    if (posIndex < 0 || posIndex >= _pendingActions.size()) return;
-
-    const QString a = _normalizeStored(action);
-    if (_pendingActions[posIndex] == a) return;
-
-    _pendingActions[posIndex] = a;
-    emit pendingActionsChanged();
 }
 
 // -------------------- auto select axis --------------------
@@ -597,6 +678,76 @@ void AxisActionRouter::_autoSelectAxisIfMoved(int axis, int raw, float norm, qin
 }
 
 // -------------------- runtime axis update + stable trigger --------------------
+// void AxisActionRouter::_onAxisValueChanged(int axis, int value)
+// {
+//     const qint64 now = QDateTime::currentMSecsSinceEpoch();
+//     const float  v   = _norm(value);
+
+//     if (axis >= 0 && axis < _lastAxisNorm.size()) {
+//         _autoSelectAxisIfMoved(axis, value, v, now);
+//         _lastAxisNorm[axis] = v;
+//     }
+
+//     if (axis == _selectedAxis) {
+//         _selectedAxisRaw  = value;
+//         _selectedAxisNorm = v;
+//         emit selectedAxisValueChanged();
+
+//         if (_calibrating) _calibFeed(v, now);
+//     }
+
+//             // Anti-jitter
+//     const qint64 stableMs  = 180;
+//     const qint64 minGapMs  = 250;
+
+//     for (auto& m : _stored) {
+//         if (m.axis != axis) continue;
+//         if (m.centers.isEmpty()) continue;
+
+//         const int idxRaw = m.thresholds.isEmpty()
+//                                ? _nearestCenterIndex(v, m.centers)
+//                                : _indexFromThresholds(v, m.thresholds);
+
+//         if (m.stableIndex == -999) {
+//             m.stableIndex = idxRaw;
+//             m.pendingIndex = -999;
+//             m.pendingSinceMs = 0;
+//             continue;
+//         }
+
+//         if (idxRaw == m.stableIndex) {
+//             m.pendingIndex = -999;
+//             m.pendingSinceMs = 0;
+//             continue;
+//         }
+
+//         if (m.pendingIndex != idxRaw) {
+//             m.pendingIndex = idxRaw;
+//             m.pendingSinceMs = now;
+//             continue;
+//         }
+
+//         if ((now - m.pendingSinceMs) < stableMs) continue;
+
+//         m.stableIndex = idxRaw;
+//         m.pendingIndex = -999;
+//         m.pendingSinceMs = 0;
+
+//         if ((now - m.lastFireMs) < minGapMs) continue;
+//         m.lastFireMs = now;
+
+//         const QString action =
+//             (idxRaw >= 0 && idxRaw < m.actions.size())
+//                 ? _normalizeStored(m.actions[idxRaw])
+//                 : QStringLiteral("No Action");
+
+//         qWarning() << "[AXMAP]" << "axis=" << axis << "idx=" << idxRaw << "norm=" << v << "action=" << action;
+
+//         _triggerAction(action);
+//     }
+// }
+
+// -------------------- runtime axis update + stable trigger --------------------
 void AxisActionRouter::_onAxisValueChanged(int axis, int value)
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -615,6 +766,7 @@ void AxisActionRouter::_onAxisValueChanged(int axis, int value)
         if (_calibrating) _calibFeed(v, now);
     }
 
+            // Anti-jitter
     const qint64 stableMs  = 180;
     const qint64 minGapMs  = 250;
 
@@ -626,31 +778,45 @@ void AxisActionRouter::_onAxisValueChanged(int axis, int value)
                                ? _nearestCenterIndex(v, m.centers)
                                : _indexFromThresholds(v, m.thresholds);
 
+        const int prevStable = m.stableIndex;   // ✅ เก็บค่าเดิมไว้เทียบ
+
+                // init ครั้งแรก: ตั้ง stableIndex แล้ว emit ให้ UI รู้ทันที
         if (m.stableIndex == -999) {
-            m.stableIndex = idxRaw;
-            m.pendingIndex = -999;
-            m.pendingSinceMs = 0;
+            m.stableIndex     = idxRaw;
+            m.pendingIndex    = -999;
+            m.pendingSinceMs  = 0;
+
+            if (m.stableIndex != prevStable) {
+                emit axisActivePosChanged(axis, m.stableIndex);
+            }
             continue;
         }
 
         if (idxRaw == m.stableIndex) {
-            m.pendingIndex = -999;
+            m.pendingIndex   = -999;
             m.pendingSinceMs = 0;
             continue;
         }
 
         if (m.pendingIndex != idxRaw) {
-            m.pendingIndex = idxRaw;
+            m.pendingIndex   = idxRaw;
             m.pendingSinceMs = now;
             continue;
         }
 
         if ((now - m.pendingSinceMs) < stableMs) continue;
 
-        m.stableIndex = idxRaw;
-        m.pendingIndex = -999;
-        m.pendingSinceMs = 0;
+                // stable เปลี่ยนตำแหน่งแล้ว
+        m.stableIndex     = idxRaw;
+        m.pendingIndex    = -999;
+        m.pendingSinceMs  = 0;
 
+                //  emit ก่อน minGapMs เพื่อให้ UI ติด/ดับได้แม้ action ยังไม่ยิง
+        if (m.stableIndex != prevStable) {
+            emit axisActivePosChanged(axis, m.stableIndex);
+        }
+
+                // จำกัดความถี่การยิง action
         if ((now - m.lastFireMs) < minGapMs) continue;
         m.lastFireMs = now;
 
@@ -665,43 +831,6 @@ void AxisActionRouter::_onAxisValueChanged(int axis, int value)
     }
 }
 
-// -------------------- commit mapping --------------------
-void AxisActionRouter::commitSelectedAxisMapping()
-{
-    if (_calCenters.isEmpty()) return;
-
-    StoredMapping m;
-    m.axis       = _selectedAxis;
-    m.centers    = _calCenters;
-    m.thresholds = _calThresholds;
-    m.actions    = _pendingActions;
-
-    for (QString& a : m.actions) a = _normalizeStored(a);
-
-    const int positions = _positionsCount(m.centers, m.thresholds);
-    while (m.actions.size() < positions) m.actions << "No Action";
-    if (m.actions.size() > positions) m.actions = m.actions.mid(0, positions);
-
-    m.stableIndex = -999;
-    m.pendingIndex = -999;
-    m.pendingSinceMs = 0;
-    m.lastFireMs = 0;
-
-    int found = -1;
-    for (int i = 0; i < _stored.size(); ++i) {
-        if (_stored[i].axis == m.axis) { found = i; break; }
-    }
-
-    if (found >= 0) _stored[found] = m;
-    else            _stored.push_back(m);
-
-    _rebuildSummaries();
-    emit mappingsChanged();
-
-    _saveToSettings();
-
-    _applyMappingToUiForAxis(_selectedAxis);
-}
 
 AxisActionRouter::StoredMapping* AxisActionRouter::_findMapping(int axis)
 {
@@ -716,6 +845,8 @@ void AxisActionRouter::_applyMappingToUiForAxis(int axis)
     if (auto* m = _findMapping(axis)) {
         _calCenters     = m->centers;
         _calThresholds  = m->thresholds;
+
+                // sync default pending actions = stored actions
         _pendingActions = m->actions;
 
         const int positions = _positionsCount(_calCenters, _calThresholds);
@@ -731,7 +862,6 @@ void AxisActionRouter::_applyMappingToUiForAxis(int axis)
     }
 
     emit calibrationChanged();
-    emit pendingActionsChanged();
 }
 
 void AxisActionRouter::removeMapping(int axis)
@@ -742,7 +872,6 @@ void AxisActionRouter::removeMapping(int axis)
             _rebuildSummaries();
             emit mappingsChanged();
             _saveToSettings();
-            if (axis == _selectedAxis) _applyMappingToUiForAxis(axis);
             return;
         }
     }
@@ -754,14 +883,6 @@ void AxisActionRouter::clearAllMappings()
     _mappingSummaries.clear();
     emit mappingsChanged();
     _saveToSettings();
-    _applyMappingToUiForAxis(_selectedAxis);
-}
-
-// -------------------- debug --------------------
-void AxisActionRouter::_onRawButtonPressedChanged(int button, int pressed)
-{
-    qWarning() << "[BTN]" << (pressed ? "PRESS" : "RELEASE")
-    << "button=" << button << "rawPressed=" << pressed;
 }
 
 // -------------------- action dispatch --------------------
@@ -782,6 +903,17 @@ bool AxisActionRouter::_trySetVehicleFlightMode(const QString& modeTitle)
 
     return true;
 }
+
+int AxisActionRouter::activePosForAxis(int axis) const
+{
+    for (const auto& m : _stored) {
+        if (m.axis == axis) {
+            return (m.stableIndex == -999) ? -1 : m.stableIndex;
+        }
+    }
+    return -1;
+}
+
 
 QObject* AxisActionRouter::_assignableActionObjectAt(int idx) const
 {
@@ -878,6 +1010,16 @@ void AxisActionRouter::_triggerAction(const QString& label)
 
     emit requestTriggerQgcAction(a);
 }
+
+void AxisActionRouter::emitActivePositionSnapshot()
+{
+    // ยิงสัญญาณให้ QML เติม map ได้ทันที แม้ไม่มีการขยับแกนตอนกลับหน้า
+    for (const auto& m : _stored) {
+        const int pos = (m.stableIndex == -999) ? -1 : m.stableIndex;
+        emit axisActivePosChanged(m.axis, pos);
+    }
+}
+
 
 void AxisActionRouter::_arm(bool arm)
 {
