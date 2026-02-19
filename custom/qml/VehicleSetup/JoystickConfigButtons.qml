@@ -30,9 +30,7 @@ ColumnLayout {
     }
 
     // Controller (ใช้กับ firmware JS buttons)
-    JoystickConfigController {
-        id: controller
-    }
+    JoystickConfigController { id: controller }
 
     property var  activeJoystick: _activeJoystick
     property var  axisRouter: QGroundControl.corePlugin ? QGroundControl.corePlugin.axisActionRouter : null
@@ -40,6 +38,9 @@ ColumnLayout {
 
     // limit buttons shown (เหมือนของเดิมใน QGC)
     property int _maxButtons: 64
+
+    // ===== Edit mode (rename + drag reorder) =====
+    property bool editMode: false
 
     // ===== helpers: count axes/buttons (รองรับทั้ง property และ function) =====
     function _axisCount() {
@@ -74,22 +75,12 @@ ColumnLayout {
         return (v === undefined) ? -1 : v
     }
 
-    function _axisHasMapping(axisNum) {
-        if (!axisRouter) return false
-        axisRouter.mappingSummaries // bind to mappingsChanged
-        return axisRouter.positionsForAxis(axisNum) > 0
-    }
-
     function _refreshActivePosSnapshot() {
         if (!axisRouter) return
-
-        // วิธีหลัก: ให้ C++ emit snapshot ออกมาเป็น signal axisActivePosChanged(..) เติม map ให้
         if (axisRouter.emitActivePositionSnapshot) {
             axisRouter.emitActivePositionSnapshot()
             return
         }
-
-        // fallback: เติมจาก activePosForAxis แบบอ่านตรง ๆ
         if (axisRouter.mappedAxes && axisRouter.activePosForAxis) {
             for (var i = 0; i < axisRouter.mappedAxes.length; i++) {
                 var ax = axisRouter.mappedAxes[i]
@@ -107,7 +98,6 @@ ColumnLayout {
         if (joystickAvailable) axisRouter.setJoystick(activeJoystick)
         else                  axisRouter.setJoystick(null)
 
-        // กลับหน้า/เพิ่ง bind joystick แล้วให้ดึง snapshot ทันที
         _refreshActivePosSnapshot()
     }
 
@@ -395,30 +385,29 @@ ColumnLayout {
                     id: calibrateBox
                     title: qsTr("Calibrate Axis")
 
-                    // ✅ เขียวเมื่อ selectedAxis มี mapping (calibrate แล้ว + save แล้ว)
+                    // ✅ เขียวเมื่อ selectedAxis มี mapping
                     readonly property bool savedAxis: {
                         if (!axisRouter) return false
                         axisRouter.mappingSummaries
                         return axisRouter.positionsForAxis(axisRouter.selectedAxis) > 0
                     }
 
-                    // ===== Coach state (guide เท่านั้น) =====
-                    property int desiredPositions: 3   // ผู้ใช้เลือก 1/2/3 ก่อนเริ่ม
+                    // ผู้ใช้เลือก 1/2/3 ก่อนเริ่ม
+                    property int desiredPositions: 3
 
-                    // ดึงเลขจาก hint เฉพาะตอน calibrating (กันไปจับเลขอื่น)
+                    // ดึงเลขจาก hint เฉพาะตอน calibrating
                     readonly property int capturedCount: {
                         if (!axisRouter || !axisRouter.calibrating) return 0
                         var h = String(axisRouter.calibrationHint || "")
-                        var m = h.match(/(\d+)/)
+                        var m = h.match(/Captured\s+(\d+)/i)
+                        if (!m) m = h.match(/(\d+)/) // fallback
                         return m ? parseInt(m[1]) : 0
                     }
 
-                    // ✅ ready เมื่อจับครบ
                     readonly property bool readyToStop: !!axisRouter && axisRouter.calibrating && (capturedCount >= desiredPositions)
 
-                    // ✅ กันจับเกิน: auto-stop เมื่อครบตาม desiredPositions
+                    // auto-stop (กันผู้ใช้รอนานแล้วมัน capture เพิ่ม)
                     property bool _autoStopFired: false
-
                     Timer {
                         id: autoStopTimer
                         interval: 120
@@ -431,7 +420,7 @@ ColumnLayout {
                         }
                     }
 
-                    // ช่วยบอกผู้ใช้ว่า "ค้างนิ่งอยู่ไหม"
+                    // steady helper
                     property real   _lastNorm: 0
                     property double _lastChangeMs: 0
                     property bool   _holdingSteady: false
@@ -451,7 +440,6 @@ ColumnLayout {
                                 calibrateBox._holdingSteady = (now - calibrateBox._lastChangeMs) > 250
                             }
 
-                            // ✅ trigger auto-stop แค่ครั้งเดียว
                             if (calibrateBox.readyToStop && !calibrateBox._autoStopFired) {
                                 calibrateBox._autoStopFired = true
                                 autoStopTimer.restart()
@@ -459,8 +447,7 @@ ColumnLayout {
                         }
                     }
 
-                    // ===== Watchdog กัน “เลือกแกนผิดแล้วล็อกตาย” =====
-                    // ✅ เตือนเฉพาะกรณี "ยังไม่เคยขยับเลย" และ "ยังจับไม่ได้สักตำแหน่ง"
+                    // watchdog: เตือนเฉพาะ "ยังไม่ขยับเลย" และ "ยังไม่จับได้สักตำแหน่ง"
                     property bool   _noMoveWarn: false
                     property bool   _moveSeen: false
                     property real   _moveLastNorm: 0
@@ -473,7 +460,7 @@ ColumnLayout {
                         onTriggered: {
                             if (!axisRouter) return
 
-                            // ถ้าจับครบแล้ว ไม่ต้องเตือนอะไรแล้ว
+                            // ✅ ถ้าจับครบหรือจับได้แล้ว ไม่เตือนแดง
                             if (calibrateBox.readyToStop || calibrateBox.capturedCount > 0) {
                                 calibrateBox._noMoveWarn = false
                                 return
@@ -505,7 +492,7 @@ ColumnLayout {
                                          : Math.max(ScreenTools.defaultFontPixelWidth * 44, vScroll.width * 0.33)
 
                     // =========================
-                    // ✅ FIXED LOCK OVERLAY
+                    // Modal overlay while calibrating
                     // =========================
                     Item {
                         id: calibLockLayer
@@ -514,11 +501,7 @@ ColumnLayout {
                         z: 999999
                         visible: !!axisRouter && axisRouter.calibrating
 
-                        Rectangle {
-                            anchors.fill: parent
-                            color: "#000000"
-                            opacity: 0.55
-                        }
+                        Rectangle { anchors.fill: parent; color: "#000000"; opacity: 0.55 }
 
                         MouseArea {
                             anchors.fill: parent
@@ -558,7 +541,6 @@ ColumnLayout {
                                     width: modalFlick.width
                                     spacing: ScreenTools.defaultFontPixelHeight * 0.7
 
-                                    // Header
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: ScreenTools.defaultFontPixelWidth
@@ -575,7 +557,6 @@ ColumnLayout {
                                         }
                                     }
 
-                                    // เปลี่ยนแกนได้ระหว่าง calibrate
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: ScreenTools.defaultFontPixelWidth
@@ -593,6 +574,9 @@ ColumnLayout {
                                                 axisRouter.selectedAxis = i
                                                 axisRouter.clearCalibration()
                                                 calibrateBox._autoStopFired = false
+
+                                                // ส่งจำนวน pos ที่ต้องการไป C++
+                                                axisRouter.desiredPositions = calibrateBox.desiredPositions
                                                 axisRouter.startCalibration()
 
                                                 calibrateBox._lastNorm = axisRouter.selectedAxisNorm
@@ -607,7 +591,6 @@ ColumnLayout {
                                         }
                                     }
 
-                                    // Live values
                                     QGCLabel {
                                         Layout.fillWidth: true
                                         opacity: 0.85
@@ -703,6 +686,8 @@ ColumnLayout {
                                                 if (!axisRouter) return
                                                 axisRouter.clearCalibration()
                                                 calibrateBox._autoStopFired = false
+
+                                                axisRouter.desiredPositions = calibrateBox.desiredPositions
                                                 axisRouter.startCalibration()
 
                                                 calibrateBox._lastNorm = axisRouter.selectedAxisNorm
@@ -718,7 +703,6 @@ ColumnLayout {
 
                                         Item { Layout.fillWidth: true }
 
-                                        // ยังมีปุ่มไว้ (กรณีอยากกดเอง) แต่ปกติจะ auto-stop เมื่อครบ
                                         QGCButton {
                                             text: qsTr("Stop (Save)")
                                             onClicked: { if (axisRouter) axisRouter.stopCalibration() }
@@ -732,7 +716,7 @@ ColumnLayout {
                     }
 
                     // =========================
-                    // Normal box content (ก่อนเริ่ม calibrate)
+                    // Normal box content
                     // =========================
                     ColumnLayout {
                         anchors.margins: ScreenTools.defaultFontPixelWidth
@@ -903,7 +887,6 @@ ColumnLayout {
                                 text: qsTr("Start Calibrate")
                                 enabled: !!axisRouter && !axisRouter.calibrating
                                 onClicked: {
-                                    // reset watchdog + steady state
                                     calibrateBox._autoStopFired = false
 
                                     calibrateBox._moveLastNorm = axisRouter ? axisRouter.selectedAxisNorm : 0
@@ -915,6 +898,8 @@ ColumnLayout {
                                     calibrateBox._lastChangeMs = Date.now()
                                     calibrateBox._holdingSteady = false
 
+                                    // ✅ ส่ง desiredPositions ลง C++ เพื่อกันเก็บเกิน
+                                    axisRouter.desiredPositions = calibrateBox.desiredPositions
                                     axisRouter.startCalibration()
                                 }
                             }
@@ -944,12 +929,31 @@ ColumnLayout {
                         anchors.margins: ScreenTools.defaultFontPixelWidth
                         spacing: ScreenTools.defaultFontPixelHeight * 0.7
 
+                        // Header row + Edit button (สีฟ้า)
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: ScreenTools.defaultFontPixelWidth
+
+                            QGCLabel {
+                                Layout.fillWidth: true
+                                font.bold: true
+                                opacity: 0.9
+                                text: editMode ? qsTr("Edit mode: rename & drag to reorder") : qsTr("Assign actions per position")
+                            }
+
+                            QGCButton {
+                                text: editMode ? qsTr("Done") : qsTr("Edit")
+                                onClicked: editMode = !editMode
+                                // โทนฟ้า (ให้ดูคล้ายตัวอย่าง)
+                                primary: true
+                            }
+                        }
+
                         GridLayout {
                             id: axisGrid
                             Layout.fillWidth: true
                             Layout.alignment: Qt.AlignTop
 
-                            // responsive columns (1..3)
                             readonly property real minCardW: ScreenTools.defaultFontPixelWidth * 44
                             columns: {
                                 var cs = columnSpacing
@@ -959,7 +963,6 @@ ColumnLayout {
                                 return n
                             }
 
-                            // ทำให้การ์ดกว้างเท่ากันทุกใบ
                             readonly property real cardW: {
                                 var c = columns
                                 var cs = columnSpacing
@@ -971,11 +974,14 @@ ColumnLayout {
                             rowSpacing: ScreenTools.defaultFontPixelHeight
 
                             Repeater {
+                                id: axisCardRepeater
                                 model: axisRouter ? axisRouter.mappedAxes : []
 
                                 delegate: Rectangle {
+                                    id: cardRoot
                                     readonly property real _m: ScreenTools.defaultFontPixelWidth
                                     readonly property int axisNum: modelData
+                                    readonly property int modelIndex: index
 
                                     readonly property int posCount: {
                                         if (!axisRouter) return 0
@@ -992,6 +998,13 @@ ColumnLayout {
                                     readonly property int activePos: root._getActivePos(axisNum)
                                     readonly property bool _configured: (posCount > 0)
 
+                                    // label from C++
+                                    readonly property string axisLabel: {
+                                        if (!axisRouter || !axisRouter.axisLabel) return ("Axis " + axisNum)
+                                        var t = axisRouter.axisLabel(axisNum)
+                                        return (t && String(t).trim().length > 0) ? t : ("Axis " + axisNum)
+                                    }
+
                                     Layout.fillWidth: true
                                     Layout.preferredWidth: axisGrid.cardW
                                     Layout.alignment: Qt.AlignTop
@@ -1003,6 +1016,31 @@ ColumnLayout {
 
                                     color: qgcPal.windowShade
                                     opacity: 0.96
+
+                                    // ========= Drag & Drop =========
+                                    Drag.active: dragHandler.active
+                                    Drag.hotSpot.x: width / 2
+                                    Drag.hotSpot.y: height / 2
+                                    Drag.mimeData: { "application/x-axis-index": String(modelIndex) }
+
+                                    DragHandler {
+                                        id: dragHandler
+                                        enabled: root.editMode
+                                    }
+
+                                    DropArea {
+                                        anchors.fill: parent
+                                        enabled: root.editMode
+
+                                        onEntered: function(drag){
+                                            if (!axisRouter || !drag || !drag.source) return
+                                            var from = drag.source.modelIndex
+                                            var to   = cardRoot.modelIndex
+                                            if (from === to) return
+                                            // move in C++ (persist order)
+                                            axisRouter.moveMappingByIndex(from, to)
+                                        }
+                                    }
 
                                     ColumnLayout {
                                         id: cardCol
@@ -1016,19 +1054,55 @@ ColumnLayout {
                                             Layout.fillWidth: true
                                             spacing: ScreenTools.defaultFontPixelWidth
 
-                                            QGCLabel {
+                                            // Title / rename
+                                            Item {
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 18
-                                                text: "Axis " + axisNum + (activePos >= 0 ? ("  (Pos " + activePos + ")") : "")
-                                                font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.2
-                                                font.bold: _configured
-                                                color: qgcPal.text
-                                                elide: Text.ElideRight
+                                                height: titleRow.implicitHeight
+
+                                                RowLayout {
+                                                    id: titleRow
+                                                    anchors.fill: parent
+                                                    spacing: ScreenTools.defaultFontPixelWidth * 0.6
+
+                                                    // normal title
+                                                    QGCLabel {
+                                                        id: titleLabel
+                                                        Layout.fillWidth: true
+                                                        visible: !root.editMode
+                                                        text: cardRoot.axisLabel + (activePos >= 0 ? ("  (Pos " + activePos + ")") : "")
+                                                        font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.2
+                                                        font.bold: _configured
+                                                        color: qgcPal.text
+                                                        elide: Text.ElideRight
+                                                    }
+
+                                                    // edit title
+                                                    QGCTextField {
+                                                        id: titleEdit
+                                                        Layout.fillWidth: true
+                                                        visible: root.editMode
+                                                        text: cardRoot.axisLabel
+                                                        placeholderText: qsTr("Axis name")
+                                                        onEditingFinished: {
+                                                            if (!axisRouter || !axisRouter.setAxisLabel) return
+                                                            axisRouter.setAxisLabel(cardRoot.axisNum, text)
+                                                        }
+                                                    }
+
+                                                    // show axis number small (always)
+                                                    QGCLabel {
+                                                        opacity: 0.65
+                                                        text: "(#" + cardRoot.axisNum + ")"
+                                                        visible: root.editMode
+                                                    }
+                                                }
                                             }
 
                                             QGCButton {
                                                 text: qsTr("Remove")
                                                 onClicked: axisRouter.removeMapping(axisNum)
+                                                enabled: !root.editMode  // กันเผลอกดตอนลาก
                                             }
                                         }
 
@@ -1064,6 +1138,7 @@ ColumnLayout {
                                                         anchors.fill: parent
                                                         anchors.margins: 1
                                                         model: activeJoystick ? activeJoystick.assignableActionTitles : []
+                                                        enabled: !root.editMode  // edit mode = ลาก/เปลี่ยนชื่ออย่างเดียว
 
                                                         currentIndex: {
                                                             if (!activeJoystick) return 0

@@ -13,10 +13,6 @@ class AxisActionRouter : public QObject
 {
     Q_OBJECT
 
-            // Joystick Identity
-    // Q_PROPERTY(QString joystickName READ joystickName NOTIFY joystickChanged)
-    // Q_PROPERTY(bool joystickConnected READ joystickConnected NOTIFY joystickChanged)
-
             // Axis picker + live values
     Q_PROPERTY(QStringList axisList READ axisList NOTIFY axisListChanged)
     Q_PROPERTY(int selectedAxis READ selectedAxis WRITE setSelectedAxis NOTIFY selectedAxisChanged)
@@ -26,7 +22,7 @@ class AxisActionRouter : public QObject
             // Auto follow axis ที่ขยับ
     Q_PROPERTY(bool autoSelectAxis READ autoSelectAxis WRITE setAutoSelectAxis NOTIFY autoSelectAxisChanged)
 
-            // แกนที่มี mapping แล้ว
+            // แกนที่มี mapping แล้ว (ordered, persists)
     Q_PROPERTY(QVariantList mappedAxes READ mappedAxes NOTIFY mappingsChanged)
 
             // Calibration / loaded mapping display
@@ -38,6 +34,9 @@ class AxisActionRouter : public QObject
 
             // Stored mapping summaries
     Q_PROPERTY(QStringList mappingSummaries READ mappingSummaries NOTIFY mappingsChanged)
+
+            // ✅ Desired capture positions (1..3) from UI to C++
+    Q_PROPERTY(int desiredPositions READ desiredPositions WRITE setDesiredPositions NOTIFY desiredPositionsChanged)
 
    public:
     explicit AxisActionRouter(QObject* parent = nullptr);
@@ -53,8 +52,15 @@ class AxisActionRouter : public QObject
             // --- runtime highlight (QML) ---
     Q_INVOKABLE int activePosForAxis(int axis) const;
 
-            // ✅ NEW: ให้ QML ขอ snapshot ตอนกลับหน้า (ยิง axisActivePosChanged ให้ครบทุกแกนที่มี mapping)
+            // snapshot for QML
     Q_INVOKABLE void emitActivePositionSnapshot();
+
+            // ✅ Rename axis (persist)
+    Q_INVOKABLE QString axisLabel(int axis) const;
+    Q_INVOKABLE void setAxisLabel(int axis, const QString& label);
+
+            // ✅ Reorder cards (persist) using model indexes
+    Q_INVOKABLE void moveMappingByIndex(int fromIndex, int toIndex);
 
     QStringList axisList() const { return _axisList; }
 
@@ -77,6 +83,9 @@ class AxisActionRouter : public QObject
     QString calibrationHint() const { return _calHint; }
 
     QStringList mappingSummaries() const { return _mappingSummaries; }
+
+    int  desiredPositions() const { return _desiredPositions; }
+    void setDesiredPositions(int v);
 
     Q_INVOKABLE void startCalibration();
     Q_INVOKABLE void stopCalibration();
@@ -102,6 +111,8 @@ class AxisActionRouter : public QObject
 
     void axisActivePosChanged(int axis, int pos);
 
+    void desiredPositionsChanged();
+
    private slots:
     void _onAxisValueChanged(int axis, int value);
 
@@ -111,6 +122,10 @@ class AxisActionRouter : public QObject
         QVector<float> centers;
         QVector<float> thresholds;
         QStringList actions;
+
+                // persist UI meta
+        QString label;
+        int     order = 0;
 
                 // anti-jitter stabilizer
         int    stableIndex    = -999;
@@ -142,6 +157,15 @@ class AxisActionRouter : public QObject
 
     void _autoSelectAxisIfMoved(int axis, int raw, float norm, qint64 nowMs);
 
+    void _loadFromSettings();
+    void _saveToSettings() const;
+    void _rebuildSummaries();
+
+    QString _makeJoystickKey(Joystick* js) const;
+
+    void _normalizeOrders(); // ensure 0..n-1
+    void _sortByOrder();
+
     Vehicle*  _vehicle = nullptr;
     Joystick* _js      = nullptr;
 
@@ -167,14 +191,12 @@ class AxisActionRouter : public QObject
     qint64 _lastStableCommitMs = 0;
     float  _lastStableCommitV  = 999.f;
 
-    QStringList _pendingActions; // ใช้เป็นค่าเริ่มต้นตอนสร้าง mapping ใหม่
+    QStringList _pendingActions;
 
     QVector<StoredMapping> _stored;
     QStringList _mappingSummaries;
 
     QString _jsKey;
-    QString _makeJoystickKey(Joystick* js) const;
-    void _loadFromSettings();
-    void _saveToSettings() const;
-    void _rebuildSummaries();
+
+    int _desiredPositions = 3;
 };
