@@ -387,17 +387,336 @@ ColumnLayout {
                         return axisRouter.positionsForAxis(axisRouter.selectedAxis) > 0
                     }
 
+                    // ===== Coach state (ใช้เป็น guide เท่านั้น) =====
+                    property int desiredPositions: 3   // ผู้ใช้เลือก 1/2/3 ก่อนเริ่ม
+
+                    // ดึงเลขจาก hint เฉพาะตอน calibrating (กันไปจับ axis number หลัง stop)
+                    readonly property int capturedCount: {
+                        if (!axisRouter || !axisRouter.calibrating) return 0
+                        var h = String(axisRouter.calibrationHint || "")
+                        var m = h.match(/(\d+)/)
+                        return m ? parseInt(m[1]) : 0
+                    }
+
+                    readonly property int needStep: {
+                        var c = capturedCount
+                        if (c < 1) return 1
+                        if (c >= desiredPositions) return desiredPositions
+                        return c + 1
+                    }
+
+                    readonly property bool readyToStop: !!axisRouter && axisRouter.calibrating && (capturedCount >= desiredPositions)
+
+                    // ช่วยบอกผู้ใช้ว่า "ค้างนิ่งอยู่ไหม"
+                    property real  _lastNorm: 0
+                    property real  _lastChangeMs: 0
+                    property bool  _holdingSteady: false
+
+                    Timer {
+                        interval: 100
+                        running: !!axisRouter && axisRouter.calibrating
+                        repeat: true
+                        onTriggered: {
+                            var v = axisRouter ? axisRouter.selectedAxisNorm : 0
+                            var now = Date.now()
+                            if (Math.abs(v - calibrateBox._lastNorm) > 0.02) {
+                                calibrateBox._lastNorm = v
+                                calibrateBox._lastChangeMs = now
+                                calibrateBox._holdingSteady = false
+                            } else {
+                                calibrateBox._holdingSteady = (now - calibrateBox._lastChangeMs) > 250
+                            }
+                        }
+                    }
+
+                    function _beginCalibrate() {
+                        if (!axisRouter) return
+                        _lastNorm = axisRouter.selectedAxisNorm
+                        _lastChangeMs = Date.now()
+                        _holdingSteady = false
+
+                        axisRouter.startCalibration()
+                        calibModal.open()
+                    }
+
+                    function _cancelCalibrate() {
+                        if (!axisRouter) return
+                        axisRouter.clearCalibration()
+                        calibModal.close()
+                    }
+
+                    function _restartCalibrate() {
+                        if (!axisRouter) return
+                        axisRouter.clearCalibration()
+                        axisRouter.startCalibration()
+                        _lastNorm = axisRouter.selectedAxisNorm
+                        _lastChangeMs = Date.now()
+                        _holdingSteady = false
+                    }
+
+                    function _stopAndSave() {
+                        if (!axisRouter) return
+                        axisRouter.stopCalibration()
+                        calibModal.close()
+                    }
+
+                    // ✅ ถ้า calibration ถูกปิดจากที่อื่น (เช่น disconnect) ให้ปิด modal ด้วย
+                    Connections {
+                        target: axisRouter
+                        function onCalibratingChanged() {
+                            if (axisRouter && !axisRouter.calibrating && calibModal.visible) {
+                                calibModal.close()
+                            }
+                        }
+                    }
+
                     Layout.alignment: Qt.AlignTop
                     Layout.fillWidth: (axisSection.columns === 1)
                     Layout.preferredWidth: (axisSection.columns === 1)
                                          ? -1
                                          : Math.max(ScreenTools.defaultFontPixelWidth * 44, vScroll.width * 0.33)
 
+                    // =========================
+                    // ✅ MODAL ALERT (block input ทั้งหน้า)
+                    // =========================
+                    Popup {
+                        id: calibModal
+                        modal: true
+                        focus: true
+                        closePolicy: Popup.NoAutoClose
+
+                        // ให้ popup อยู่บน overlay layer ของ Controls
+                        parent: Overlay.overlay
+                        anchors.centerIn: parent
+                        width: Math.min(vScroll.width * 0.92, ScreenTools.defaultFontPixelWidth * 92)
+
+                        // dim + block mouse/scroll
+                        Overlay.modal: Rectangle {
+                            color: "#000000"
+                            opacity: 0.55
+                            MouseArea {
+                                anchors.fill: parent
+                                acceptedButtons: Qt.AllButtons
+                                hoverEnabled: true
+                                preventStealing: true
+                                onWheel: wheel.accepted = true
+                            }
+                        }
+
+                        background: Rectangle {
+                            radius: 12
+                            border.width: 1
+                            border.color: Qt.rgba(1,1,1,0.14)
+                            color: Qt.rgba(0.10, 0.12, 0.14, 0.98)
+                        }
+
+                        contentItem: ColumnLayout {
+                            id: modalCol
+                            anchors.margins: ScreenTools.defaultFontPixelWidth * 1.2
+                            spacing: ScreenTools.defaultFontPixelHeight * 0.7
+
+                            // Header
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: ScreenTools.defaultFontPixelWidth
+
+                                Rectangle {
+                                    width: ScreenTools.defaultFontPixelWidth * 0.9
+                                    height: width
+                                    radius: width/2
+                                    color: Qt.rgba(0.2, 0.85, 0.3, 0.95)
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+
+                                    QGCLabel {
+                                        text: qsTr("Calibrating Axis %1").arg(axisRouter ? axisRouter.selectedAxis : 0)
+                                        font.bold: true
+                                    }
+                                    QGCLabel {
+                                        opacity: 0.75
+                                        text: qsTr("Target: %1 position(s)").arg(calibrateBox.desiredPositions)
+                                    }
+                                }
+
+                                QGCButton {
+                                    text: qsTr("Cancel")
+                                    onClicked: calibrateBox._cancelCalibrate()
+                                }
+                            }
+
+                            // Body card
+                            Rectangle {
+                                Layout.fillWidth: true
+                                radius: 10
+                                border.width: 1
+                                border.color: Qt.rgba(1,1,1,0.10)
+                                color: Qt.rgba(1,1,1,0.06)
+
+                                // ✅ สำคัญ: ให้กล่องนี้มีความสูงตามเนื้อหา (แก้ทับปุ่ม/ทับ layout)
+                                implicitHeight: bodyCol.implicitHeight + ScreenTools.defaultFontPixelHeight * 1.2
+
+                                ColumnLayout {
+                                    id: bodyCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: ScreenTools.defaultFontPixelWidth
+                                    spacing: ScreenTools.defaultFontPixelHeight * 0.55
+
+                                    QGCLabel {
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        font.bold: true
+                                        text: qsTr("Guide: Move the switch to each position you want, then hold still briefly.")
+                                    }
+
+                                    // Holding indicator + progress
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: ScreenTools.defaultFontPixelWidth * 0.6
+
+                                        Rectangle {
+                                            width: ScreenTools.defaultFontPixelWidth * 0.9
+                                            height: width
+                                            radius: width/2
+                                            color: calibrateBox._holdingSteady
+                                                   ? Qt.rgba(0.2, 0.85, 0.3, 0.95)
+                                                   : Qt.rgba(0.95, 0.75, 0.15, 0.95)
+                                        }
+
+                                        QGCLabel {
+                                            Layout.fillWidth: true
+                                            opacity: 0.88
+                                            text: calibrateBox._holdingSteady
+                                                  ? qsTr("Holding steady… wait to capture")
+                                                  : qsTr("Move to next position, then hold still")
+                                        }
+
+                                        QGCLabel {
+                                            opacity: 0.75
+                                            text: qsTr("Captured: %1/%2")
+                                                  .arg(calibrateBox.capturedCount)
+                                                  .arg(calibrateBox.desiredPositions)
+                                        }
+                                    }
+
+                                    // Steps
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: ScreenTools.defaultFontPixelHeight * 0.35
+
+                                        // Step 1
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            readonly property bool done: calibrateBox.capturedCount >= 1
+                                            readonly property bool active: !done && (calibrateBox.needStep === 1)
+
+                                            Rectangle {
+                                                width: ScreenTools.defaultFontPixelWidth * 1.2
+                                                height: width
+                                                radius: width/2
+                                                color: done ? Qt.rgba(0.2,0.85,0.3,0.95)
+                                                            : (active ? Qt.rgba(0.95,0.75,0.15,0.95) : Qt.rgba(1,1,1,0.18))
+                                            }
+                                            QGCLabel {
+                                                Layout.fillWidth: true
+                                                text: done ? qsTr("Step 1 ✓  Hold at Position 1")
+                                                           : qsTr("Step 1  Go to Position 1 and hold")
+                                            }
+                                        }
+
+                                        // Step 2
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            visible: calibrateBox.desiredPositions >= 2
+                                            readonly property bool done: calibrateBox.capturedCount >= 2
+                                            readonly property bool active: !done && (calibrateBox.needStep === 2)
+
+                                            Rectangle {
+                                                width: ScreenTools.defaultFontPixelWidth * 1.2
+                                                height: width
+                                                radius: width/2
+                                                color: done ? Qt.rgba(0.2,0.85,0.3,0.95)
+                                                            : (active ? Qt.rgba(0.95,0.75,0.15,0.95) : Qt.rgba(1,1,1,0.18))
+                                            }
+                                            QGCLabel {
+                                                Layout.fillWidth: true
+                                                text: done ? qsTr("Step 2 ✓  Hold at Position 2")
+                                                           : qsTr("Step 2  Go to Position 2 and hold")
+                                            }
+                                        }
+
+                                        // Step 3
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            visible: calibrateBox.desiredPositions >= 3
+                                            readonly property bool done: calibrateBox.capturedCount >= 3
+                                            readonly property bool active: !done && (calibrateBox.needStep === 3)
+
+                                            Rectangle {
+                                                width: ScreenTools.defaultFontPixelWidth * 1.2
+                                                height: width
+                                                radius: width/2
+                                                color: done ? Qt.rgba(0.2,0.85,0.3,0.95)
+                                                            : (active ? Qt.rgba(0.95,0.75,0.15,0.95) : Qt.rgba(1,1,1,0.18))
+                                            }
+                                            QGCLabel {
+                                                Layout.fillWidth: true
+                                                text: done ? qsTr("Step 3 ✓  Hold at Position 3")
+                                                           : qsTr("Step 3  Go to Position 3 and hold")
+                                            }
+                                        }
+                                    }
+
+                                    QGCLabel {
+                                        Layout.fillWidth: true
+                                        visible: calibrateBox.readyToStop
+                                        color: Qt.rgba(0.2, 0.85, 0.3, 1.0)
+                                        font.bold: true
+                                        text: qsTr("Ready! Press Stop to save calibration.")
+                                    }
+
+                                    QGCLabel {
+                                        Layout.fillWidth: true
+                                        opacity: 0.75
+                                        wrapMode: Text.WordWrap
+                                        text: qsTr("Tip: 3-position switch can be used as 2 or 1 positions. Capture only the positions you want, then Stop. If captured wrong, Restart.")
+                                    }
+                                }
+                            }
+
+                            // Footer buttons
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: ScreenTools.defaultFontPixelWidth
+
+                                QGCButton {
+                                    text: qsTr("Restart")
+                                    onClicked: calibrateBox._restartCalibrate()
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                QGCButton {
+                                    text: calibrateBox.readyToStop ? qsTr("Stop (Save)") : qsTr("Stop")
+                                    onClicked: calibrateBox._stopAndSave()
+                                }
+                            }
+                        }
+                    }
+
+                    // =========================
+                    // Normal box content (ก่อนเริ่ม calibrate)
+                    // =========================
                     ColumnLayout {
                         anchors.margins: ScreenTools.defaultFontPixelWidth
                         anchors.fill: parent
                         spacing: ScreenTools.defaultFontPixelHeight * 0.7
 
+                        // Joystick row
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth * 0.8
@@ -417,14 +736,13 @@ ColumnLayout {
                                     anchors.margins: ScreenTools.defaultFontPixelWidth * 0.7
                                     spacing: ScreenTools.defaultFontPixelWidth * 0.6
 
-                                    // จุดสถานะ
                                     Rectangle {
                                         width: ScreenTools.defaultFontPixelWidth * 0.9
                                         height: width
                                         radius: width/2
                                         color: axisSection._joyOk
-                                               ? Qt.rgba(0.2, 0.85, 0.3, 0.95)   // เขียว = ต่ออยู่
-                                               : Qt.rgba(0.95, 0.35, 0.35, 0.95) // แดง = ไม่ต่อ
+                                               ? Qt.rgba(0.2, 0.85, 0.3, 0.95)
+                                               : Qt.rgba(0.95, 0.35, 0.35, 0.95)
                                     }
 
                                     QGCLabel {
@@ -433,26 +751,17 @@ ColumnLayout {
                                         text: activeJoystick ? activeJoystick.name : qsTr("No joystick")
                                         opacity: axisSection._joyOk ? 1.0 : 0.75
                                     }
-
-                                    // (ออปชั่น) โชว์จำนวน axis/buttons
-                                    QGCLabel {
-                                        visible: !!activeJoystick
-                                        opacity: 0.7
-                                        text: activeJoystick
-                                              ? ("A:" + activeJoystick.axisCount + "  B:" + activeJoystick.totalButtonCount)
-                                              : ""
-                                    }
                                 }
                             }
                         }
 
+                        // Axis picker
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth
 
                             QGCLabel { text: qsTr("Axis:") }
 
-                            // ✅ “กล่องขาวที่วงไว้” -> เขียวเมื่อ axis นี้ถูก calibrate/saved แล้ว
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: axisPick.implicitHeight + 2
@@ -462,7 +771,6 @@ ColumnLayout {
                                               ? Qt.rgba(0.2, 0.85, 0.3, 0.90)
                                               : Qt.rgba(qgcPal.text.r, qgcPal.text.g, qgcPal.text.b, 0.55)
 
-                                // ✅ ยังไม่ calibrate = ขาว, calibrate แล้ว = เขียวอ่อน
                                 color: calibrateBox.savedAxis
                                        ? Qt.rgba(0.2, 0.85, 0.3, 0.14)
                                        : Qt.rgba(1, 1, 1, 1)
@@ -472,14 +780,13 @@ ColumnLayout {
                                     anchors.fill: parent
                                     anchors.margins: 1
 
+                                    enabled: !axisRouter || !axisRouter.calibrating
                                     model: axisRouter ? axisRouter.axisList : []
                                     currentIndex: axisRouter ? axisRouter.selectedAxis : 0
                                     onActivated: (i) => axisRouter.selectedAxis = i
 
-                                    // กันพื้นหลัง combobox ทับ Rectangle ด้านนอก
                                     background: Rectangle { color: "transparent"; radius: 6 }
 
-                                    // ตัวเลข Axis ชัด + เขียวเมื่อ saved
                                     contentItem: QGCLabel {
                                         text: axisPick.currentText
                                         color: calibrateBox.savedAxis
@@ -490,31 +797,6 @@ ColumnLayout {
                                         leftPadding: ScreenTools.defaultFontPixelWidth * 0.8
                                         rightPadding: ScreenTools.defaultFontPixelWidth * 2.0
                                         font.bold: calibrateBox.savedAxis
-                                    }
-
-                                    // dropdown: axis ที่มี mapping เป็นสีเขียว
-                                    delegate: ItemDelegate {
-                                        width: axisPick.width
-                                        text: modelData
-
-                                        readonly property int axisNum: parseInt(modelData)
-                                        readonly property bool mapped: {
-                                            if (!axisRouter) return false
-                                            axisRouter.mappingSummaries
-                                            return axisRouter.positionsForAxis(axisNum) > 0
-                                        }
-
-                                        contentItem: QGCLabel {
-                                            text: modelData
-                                            color: mapped ? Qt.rgba(0.2, 0.85, 0.3, 1.0) : qgcPal.text
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-
-                                        background: Rectangle {
-                                            color: (axisPick.currentIndex === index || highlighted)
-                                                   ? Qt.rgba(1, 1, 1, 0.06)
-                                                   : "transparent"
-                                        }
                                     }
                                 }
                             }
@@ -529,31 +811,40 @@ ColumnLayout {
 
                         QGCCheckBox {
                             text: qsTr("Auto follow axis ที่ขยับ")
+                            enabled: !axisRouter || !axisRouter.calibrating
                             checked: axisRouter ? axisRouter.autoSelectAxis : false
                             onClicked: axisRouter.autoSelectAxis = checked
                         }
 
+                        // choose positions
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: ScreenTools.defaultFontPixelWidth
+
+                            QGCLabel { text: qsTr("Use positions:") }
+
+                            QGCComboBox {
+                                Layout.fillWidth: true
+                                enabled: !axisRouter || !axisRouter.calibrating
+                                model: [ "1", "2", "3" ]
+                                currentIndex: calibrateBox.desiredPositions - 1
+                                onActivated: (i) => calibrateBox.desiredPositions = (i + 1)
+                            }
+                        }
+
+                        // Start button only (ให้ไปควบคุมใน modal)
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth
 
                             QGCButton {
-                                text: axisRouter && axisRouter.calibrating ? qsTr("Calibrating...") : qsTr("Start Calibrate")
-                                enabled: axisRouter ? !axisRouter.calibrating : false
-                                onClicked: axisRouter.startCalibration()
-                            }
-                            QGCButton {
-                                text: qsTr("Stop")
-                                enabled: axisRouter ? axisRouter.calibrating : false
-                                onClicked: axisRouter.stopCalibration()
-                            }
-                            QGCButton {
-                                text: qsTr("Clear")
-                                enabled: !!axisRouter
-                                onClicked: axisRouter.clearCalibration()
+                                text: qsTr("Start Calibrate")
+                                enabled: !!axisRouter && !axisRouter.calibrating
+                                onClicked: calibrateBox._beginCalibrate()
                             }
                         }
 
+                        // Result (หลัง stop)
                         ColumnLayout {
                             Layout.fillWidth: true
                             visible: axisRouter ? (axisRouter.calibratedPositions > 0) : false
@@ -565,6 +856,7 @@ ColumnLayout {
                         }
                     }
                 }
+
 
                 // ---------- Right (or Bottom): Axis → Virtual Buttons ----------
                 QGCGroupBox {
