@@ -400,6 +400,54 @@ ColumnLayout {
 
                         RowLayout {
                             Layout.fillWidth: true
+                            spacing: ScreenTools.defaultFontPixelWidth * 0.8
+
+                            QGCLabel { text: qsTr("Joystick:") }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: ScreenTools.defaultFontPixelHeight * 2.2
+                                radius: 6
+                                border.width: 1
+                                border.color: Qt.rgba(1,1,1,0.12)
+                                color: Qt.rgba(1,1,1,0.06)
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: ScreenTools.defaultFontPixelWidth * 0.7
+                                    spacing: ScreenTools.defaultFontPixelWidth * 0.6
+
+                                    // จุดสถานะ
+                                    Rectangle {
+                                        width: ScreenTools.defaultFontPixelWidth * 0.9
+                                        height: width
+                                        radius: width/2
+                                        color: axisSection._joyOk
+                                               ? Qt.rgba(0.2, 0.85, 0.3, 0.95)   // เขียว = ต่ออยู่
+                                               : Qt.rgba(0.95, 0.35, 0.35, 0.95) // แดง = ไม่ต่อ
+                                    }
+
+                                    QGCLabel {
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                        text: activeJoystick ? activeJoystick.name : qsTr("No joystick")
+                                        opacity: axisSection._joyOk ? 1.0 : 0.75
+                                    }
+
+                                    // (ออปชั่น) โชว์จำนวน axis/buttons
+                                    QGCLabel {
+                                        visible: !!activeJoystick
+                                        opacity: 0.7
+                                        text: activeJoystick
+                                              ? ("A:" + activeJoystick.axisCount + "  B:" + activeJoystick.totalButtonCount)
+                                              : ""
+                                    }
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth
 
                             QGCLabel { text: qsTr("Axis:") }

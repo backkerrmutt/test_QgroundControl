@@ -13,6 +13,10 @@ class AxisActionRouter : public QObject
 {
     Q_OBJECT
 
+            // Joystick Identity
+    // Q_PROPERTY(QString joystickName READ joystickName NOTIFY joystickChanged)
+    // Q_PROPERTY(bool joystickConnected READ joystickConnected NOTIFY joystickChanged)
+
             // Axis picker + live values
     Q_PROPERTY(QStringList axisList READ axisList NOTIFY axisListChanged)
     Q_PROPERTY(int selectedAxis READ selectedAxis WRITE setSelectedAxis NOTIFY selectedAxisChanged)
