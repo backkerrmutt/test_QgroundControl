@@ -114,22 +114,7 @@ AxisActionRouter::AxisActionRouter(QObject* parent)
     _calHint = tr("Pick an axis, press Start Calibrate, move the switch through all positions, then Stop.");
 }
 
-// -------------------- order helpers --------------------
-void AxisActionRouter::_normalizeOrders()
-{
-    for (int i = 0; i < _stored.size(); ++i) _stored[i].order = i;
-}
-
-void AxisActionRouter::_sortByOrder()
-{
-    std::sort(_stored.begin(), _stored.end(), [](const StoredMapping& a, const StoredMapping& b){
-        if (a.order != b.order) return a.order < b.order;
-        return a.axis < b.axis;
-    });
-    _normalizeOrders();
-}
-
-// -------------------- UI helpers --------------------
+// -------------------- UI helpers (Right side cards) --------------------
 int AxisActionRouter::positionsForAxis(int axis) const
 {
     for (const auto& m : _stored) {
@@ -148,43 +133,6 @@ QStringList AxisActionRouter::actionsForAxis(int axis) const
         }
     }
     return {};
-}
-
-QString AxisActionRouter::axisLabel(int axis) const
-{
-    for (const auto& m : _stored) {
-        if (m.axis == axis) {
-            return m.label;
-        }
-    }
-    return {};
-}
-
-void AxisActionRouter::setAxisLabel(int axis, const QString& label)
-{
-    StoredMapping* m = _findMapping(axis);
-    if (!m) return;
-
-    const QString t = label.trimmed();
-    if (m->label == t) return;
-
-    m->label = t;
-    _saveToSettings();
-    emit mappingsChanged();
-}
-
-void AxisActionRouter::moveMappingByIndex(int fromIndex, int toIndex)
-{
-    if (fromIndex < 0 || toIndex < 0) return;
-    if (fromIndex >= _stored.size() || toIndex >= _stored.size()) return;
-    if (fromIndex == toIndex) return;
-
-    StoredMapping m = _stored.takeAt(fromIndex);
-    _stored.insert(toIndex, m);
-
-    _normalizeOrders();
-    _saveToSettings();
-    emit mappingsChanged();
 }
 
 void AxisActionRouter::setActionForAxis(int axis, int posIndex, const QString& action)
@@ -220,11 +168,11 @@ void AxisActionRouter::setAutoSelectAxis(bool v)
 
 void AxisActionRouter::setDesiredPositions(int v)
 {
-    int nv = v;
-    if (nv < 1) nv = 1;
-    if (nv > 3) nv = 3;
-    if (_desiredPositions == nv) return;
-    _desiredPositions = nv;
+    int clamped = v;
+    if (clamped < 1) clamped = 1;
+    if (clamped > 3) clamped = 3;
+    if (_desiredPositions == clamped) return;
+    _desiredPositions = clamped;
     emit desiredPositionsChanged();
 }
 
@@ -249,11 +197,104 @@ QVariantList AxisActionRouter::calibratedThresholds() const
     return out;
 }
 
+// ✅ mappedAxes: return in UI card order
 QVariantList AxisActionRouter::mappedAxes() const
 {
+    return _mappedAxesOrdered();
+}
+
+// -------------------- axis label / card order --------------------
+QString AxisActionRouter::axisLabel(int axis) const
+{
+    const QString name = _axisNames.value(axis).trimmed();
+    if (!name.isEmpty()) return name;
+    return QStringLiteral("Axis %1").arg(axis);
+}
+
+void AxisActionRouter::setAxisLabel(int axis, const QString& label)
+{
+    const QString v = label.trimmed();
+    if (v.isEmpty()) {
+        _axisNames.remove(axis);
+    } else {
+        _axisNames[axis] = v;
+    }
+    _saveToSettings();
+    emit mappingsChanged();        // ให้ QML อัปเดตทั้งฝั่ง calibrate + card ทันที
+}
+
+void AxisActionRouter::clearAxisLabel(int axis)
+{
+    if (_axisNames.contains(axis)) {
+        _axisNames.remove(axis);
+        _saveToSettings();
+        emit mappingsChanged();
+    }
+}
+
+QVariantList AxisActionRouter::cardOrder() const
+{
     QVariantList out;
-    out.reserve(_stored.size());
-    for (const auto& m : _stored) out << m.axis;
+    out.reserve(_cardOrderAxes.size());
+    for (int a : _cardOrderAxes) out << a;
+    return out;
+}
+
+void AxisActionRouter::setCardOrder(const QVariantList& order)
+{
+    QVector<int> next;
+    next.reserve(order.size());
+    for (const QVariant& v : order) {
+        bool ok = false;
+        const int a = v.toInt(&ok);
+        if (!ok) continue;
+        if (!next.contains(a)) next.push_back(a);
+    }
+    _cardOrderAxes = next;
+    _normalizeCardOrder();
+    _saveToSettings();
+    emit mappingsChanged();
+}
+
+void AxisActionRouter::_normalizeCardOrder()
+{
+    // keep only mapped axes and append any missing ones
+    QVector<int> mapped;
+    mapped.reserve(_stored.size());
+    for (const auto& m : _stored) mapped.push_back(m.axis);
+
+    QVector<int> cleaned;
+    cleaned.reserve(_cardOrderAxes.size());
+    for (int a : _cardOrderAxes) {
+        if (mapped.contains(a) && !cleaned.contains(a)) cleaned.push_back(a);
+    }
+    for (int a : mapped) {
+        if (!cleaned.contains(a)) cleaned.push_back(a);
+    }
+    _cardOrderAxes = cleaned;
+}
+
+QVariantList AxisActionRouter::_mappedAxesOrdered() const
+{
+    QVector<int> mapped;
+    mapped.reserve(_stored.size());
+    for (const auto& m : _stored) mapped.push_back(m.axis);
+
+            // If no card order saved yet, default to stored order
+    QVector<int> order = _cardOrderAxes;
+    if (order.isEmpty()) order = mapped;
+
+    QVariantList out;
+    out.reserve(mapped.size());
+
+            // add axes in saved order
+    for (int a : order) {
+        if (mapped.contains(a)) out << a;
+    }
+    // append missing
+    for (int a : mapped) {
+        if (!out.contains(a)) out << a;
+    }
     return out;
 }
 
@@ -263,16 +304,13 @@ void AxisActionRouter::_saveToSettings() const
     if (_jsKey.isEmpty()) return;
 
     QJsonObject root;
-    root["ver"] = 2; // bump
+    root["ver"] = 2;
 
+            // mappings
     QJsonArray maps;
-    for (int i = 0; i < _stored.size(); ++i) {
-        const auto& m = _stored[i];
-
+    for (const auto& m : _stored) {
         QJsonObject o;
-        o["axis"]  = m.axis;
-        o["order"] = m.order;
-        o["label"] = m.label;
+        o["axis"] = m.axis;
 
         QJsonArray centers;
         for (float c : m.centers) centers.append(c);
@@ -290,6 +328,21 @@ void AxisActionRouter::_saveToSettings() const
     }
     root["maps"] = maps;
 
+            // ✅ UI section
+    QJsonObject ui;
+
+    QJsonObject axisNames;
+    for (auto it = _axisNames.constBegin(); it != _axisNames.constEnd(); ++it) {
+        axisNames[QString::number(it.key())] = it.value();
+    }
+    ui["axisNames"] = axisNames;
+
+    QJsonArray order;
+    for (int a : _cardOrderAxes) order.append(a);
+    ui["cardOrder"] = order;
+
+    root["ui"] = ui;
+
     QSettings s;
     s.beginGroup(kGroup);
     s.setValue(_jsKey, QJsonDocument(root).toJson(QJsonDocument::Compact));
@@ -301,6 +354,8 @@ void AxisActionRouter::_loadFromSettings()
 {
     _stored.clear();
     _mappingSummaries.clear();
+    _axisNames.clear();
+    _cardOrderAxes.clear();
 
     if (_jsKey.isEmpty()) {
         emit mappingsChanged();
@@ -324,16 +379,30 @@ void AxisActionRouter::_loadFromSettings()
     }
 
     const QJsonObject root = doc.object();
-    const QJsonArray maps  = root.value("maps").toArray();
 
+            // ui
+    const QJsonObject ui = root.value("ui").toObject();
+    const QJsonObject axisNames = ui.value("axisNames").toObject();
+    for (auto it = axisNames.begin(); it != axisNames.end(); ++it) {
+        bool ok = false;
+        const int a = it.key().toInt(&ok);
+        if (!ok) continue;
+        _axisNames[a] = it.value().toString();
+    }
+    const QJsonArray order = ui.value("cardOrder").toArray();
+    for (const QJsonValue& v : order) {
+        if (!v.isDouble()) continue;
+        _cardOrderAxes.push_back(v.toInt());
+    }
+
+            // maps
+    const QJsonArray maps  = root.value("maps").toArray();
     for (const QJsonValue& v : maps) {
         if (!v.isObject()) continue;
         const QJsonObject o = v.toObject();
 
         StoredMapping m;
-        m.axis  = o.value("axis").toInt(-1);
-        m.order = o.value("order").toInt(0);
-        m.label = o.value("label").toString();
+        m.axis = o.value("axis").toInt(-1);
 
         for (const QJsonValue& x : o.value("centers").toArray())    m.centers.append(float(x.toDouble()));
         for (const QJsonValue& x : o.value("thresholds").toArray()) m.thresholds.append(float(x.toDouble()));
@@ -350,7 +419,6 @@ void AxisActionRouter::_loadFromSettings()
 
         if (m.axis < 0 || m.centers.isEmpty()) continue;
 
-                // dedupe by axis
         int found = -1;
         for (int i = 0; i < _stored.size(); ++i) {
             if (_stored[i].axis == m.axis) { found = i; break; }
@@ -359,11 +427,12 @@ void AxisActionRouter::_loadFromSettings()
         else            _stored.append(m);
     }
 
-    _sortByOrder();
+    _normalizeCardOrder();
     _rebuildSummaries();
     emit mappingsChanged();
     _applyMappingToUiForAxis(_selectedAxis);
 
+            // refresh active pos snapshot for UI
     emitActivePositionSnapshot();
 }
 
@@ -417,9 +486,18 @@ void AxisActionRouter::setJoystick(QObject* joystickObj)
     _loadFromSettings();
 }
 
+// void AxisActionRouter::setVehicle(QObject* vehicleObj)
+// {
+//     _vehicle = qobject_cast<Vehicle*>(vehicleObj);
+// }
+
 void AxisActionRouter::setVehicle(QObject* vehicleObj)
 {
-    _vehicle = qobject_cast<Vehicle*>(vehicleObj);
+    Vehicle* v = qobject_cast<Vehicle*>(vehicleObj);
+    if (_vehicle.data() == v) {
+        return;
+    }
+    _vehicle = v;
 }
 
 void AxisActionRouter::_attach(Joystick* js)
@@ -525,6 +603,7 @@ void AxisActionRouter::startCalibration()
 
     _calCenters.clear();
     _calThresholds.clear();
+
     _pendingActions.clear();
 
     _lastStableCommitMs = 0;
@@ -555,8 +634,6 @@ void AxisActionRouter::stopCalibration()
         nm.centers    = _calCenters;
         nm.thresholds = _calThresholds;
         nm.actions    = _pendingActions;
-        nm.label      = QString();
-        nm.order      = _stored.size();
 
         const int positions = _positionsCount(nm.centers, nm.thresholds);
         while (nm.actions.size() < positions) nm.actions << "No Action";
@@ -585,7 +662,7 @@ void AxisActionRouter::stopCalibration()
         m->lastFireMs = 0;
     }
 
-    _normalizeOrders();
+    _normalizeCardOrder();
     _rebuildSummaries();
     _saveToSettings();
     emit mappingsChanged();
@@ -619,11 +696,8 @@ void AxisActionRouter::clearCalibration()
 // ---- calibration helpers ----
 void AxisActionRouter::_calibFeed(float v, qint64 nowMs)
 {
-    // ✅ กันเก็บเกินจากที่ผู้ใช้เลือก
+    // ✅ hard stop: prevent capturing more than desiredPositions
     if (_desiredPositions > 0 && _stableSamples.size() >= _desiredPositions) {
-        // hint ให้ UI ตีความ capturedCount ได้ (ใช้ regex ใน QML)
-        _calHint = tr("Captured %1 stable position(s). Ready to save.").arg(_stableSamples.size());
-        emit calibrationChanged();
         return;
     }
 
@@ -660,42 +734,16 @@ void AxisActionRouter::_calibFeed(float v, qint64 nowMs)
     _lastStableCommitMs = nowMs;
     _lastStableCommitV  = mean;
 
-    _calHint = tr("Captured %1 stable position(s). Move to the next position and pause.").arg(_stableSamples.size());
+            // ✅ hint as X/Y
+    if (_desiredPositions > 0) {
+        _calHint = tr("Captured %1/%2 stable position(s). Move to the next position and pause.")
+        .arg(_stableSamples.size())
+            .arg(_desiredPositions);
+    } else {
+        _calHint = tr("Captured %1 stable position(s). Move to the next position and pause.")
+        .arg(_stableSamples.size());
+    }
     emit calibrationChanged();
-
-            // ✅ ถ้าครบแล้ว แจ้งให้รู้ (และ QML จะ auto-stop)
-    if (_desiredPositions > 0 && _stableSamples.size() >= _desiredPositions) {
-        _calHint = tr("Captured %1 stable position(s). Ready to save.").arg(_stableSamples.size());
-        emit calibrationChanged();
-    }
-}
-
-static void _mergeClosestClusters(QVector<QVector<float>>& clusters)
-{
-    if (clusters.size() < 2) return;
-
-            // merge pair with smallest distance between means
-    auto meanOf = [](const QVector<float>& c){
-        float s = 0.f;
-        for (float x : c) s += x;
-        const qsizetype denom = std::max<qsizetype>(qsizetype(1), c.size());
-        return s / float(denom);
-
-    };
-
-    int bestI = 0;
-    float bestD = std::numeric_limits<float>::max();
-
-    for (int i = 0; i < clusters.size() - 1; ++i) {
-        const float a = meanOf(clusters[i]);
-        const float b = meanOf(clusters[i+1]);
-        const float d = qAbs(b - a);
-        if (d < bestD) { bestD = d; bestI = i; }
-    }
-
-            // merge bestI and bestI+1
-    clusters[bestI] += clusters[bestI+1];
-    clusters.removeAt(bestI+1);
 }
 
 void AxisActionRouter::_finalizeCalibrationFromSamples()
@@ -722,22 +770,19 @@ void AxisActionRouter::_finalizeCalibrationFromSamples()
         else                                  clusters.push_back({s});
     }
 
-            // ✅ ถ้า jitter ทำให้ cluster เกินที่เลือก -> merge ให้เหลือเท่าที่เลือก
-    const int want = std::max(1, std::min(3, _desiredPositions));
-    while (clusters.size() > want) {
-        _mergeClosestClusters(clusters);
-    }
-
     QVector<float> centers;
     centers.reserve(clusters.size());
     for (const auto& c : clusters) {
         float sum = 0.f;
         for (float x : c) sum += x;
-        const qsizetype denom = std::max<qsizetype>(qsizetype(1), c.size());
-        centers.push_back(sum / float(denom));
-
+        centers.push_back(sum / float(c.size()));
     }
     std::sort(centers.begin(), centers.end());
+
+            // ✅ enforce desiredPositions at finalize too (extra safety)
+    if (_desiredPositions > 0 && centers.size() > _desiredPositions) {
+        centers = centers.mid(0, _desiredPositions);
+    }
 
     QVector<float> thresholds;
     if (centers.size() >= 2) {
@@ -754,7 +799,9 @@ void AxisActionRouter::_finalizeCalibrationFromSamples()
     const int pos = _positionsCount(_calCenters, _calThresholds);
     for (int i = 0; i < pos; ++i) _pendingActions << "No Action";
 
-    _calHint = tr("Detected %1 positions (%2-pos).").arg(_calCenters.size()).arg(_calCenters.size());
+    if (_calCenters.size() == 2)      _calHint = tr("Detected 2 positions (2-pos).");
+    else if (_calCenters.size() == 3) _calHint = tr("Detected 3 positions (3-pos).");
+    else                              _calHint = tr("Detected %1 positions (zones).").arg(_calCenters.size());
 }
 
 // -------------------- auto select axis --------------------
@@ -904,7 +951,7 @@ void AxisActionRouter::removeMapping(int axis)
     for (int i = 0; i < _stored.size(); ++i) {
         if (_stored[i].axis == axis) {
             _stored.removeAt(i);
-            _normalizeOrders();
+            _normalizeCardOrder();
             _rebuildSummaries();
             emit mappingsChanged();
             _saveToSettings();
@@ -917,23 +964,43 @@ void AxisActionRouter::clearAllMappings()
 {
     _stored.clear();
     _mappingSummaries.clear();
+    _cardOrderAxes.clear();
     emit mappingsChanged();
     _saveToSettings();
 }
 
 // -------------------- action dispatch --------------------
+// bool AxisActionRouter::_trySetVehicleFlightMode(const QString& modeTitle)
+// {
+//     if (!_vehicle) return false;
+
+//     const QString mode = modeTitle.trimmed();
+//     if (mode.isEmpty()) return false;
+
+//     if (!_vehicle->flightModes().contains(mode)) {
+//         return false;
+//     }
+
+//     QMetaObject::invokeMethod(_vehicle, [veh=_vehicle, mode] {
+//         veh->setFlightMode(mode);
+//     }, Qt::QueuedConnection);
+
+//     return true;
+// }
+
 bool AxisActionRouter::_trySetVehicleFlightMode(const QString& modeTitle)
 {
-    if (!_vehicle) return false;
+    Vehicle* veh = _vehicle.data();
+    if (!veh) return false;
 
     const QString mode = modeTitle.trimmed();
     if (mode.isEmpty()) return false;
 
-    if (!_vehicle->flightModes().contains(mode)) {
+    if (!veh->flightModes().contains(mode)) {
         return false;
     }
 
-    QMetaObject::invokeMethod(_vehicle, [veh=_vehicle, mode] {
+    QMetaObject::invokeMethod(veh, [veh, mode] {
         veh->setFlightMode(mode);
     }, Qt::QueuedConnection);
 
@@ -1054,18 +1121,38 @@ void AxisActionRouter::emitActivePositionSnapshot()
     }
 }
 
+// void AxisActionRouter::_arm(bool arm)
+// {
+//     if (!_vehicle) return;
+//     QMetaObject::invokeMethod(_vehicle, [veh=_vehicle, arm]{
+//         veh->setArmedShowError(arm);
+//     }, Qt::QueuedConnection);
+// }
+
+// void AxisActionRouter::_emergencyStop()
+// {
+//     if (!_vehicle) return;
+//     QMetaObject::invokeMethod(_vehicle, [veh=_vehicle]{
+//         veh->emergencyStop();
+//     }, Qt::QueuedConnection);
+// }
+
 void AxisActionRouter::_arm(bool arm)
 {
-    if (!_vehicle) return;
-    QMetaObject::invokeMethod(_vehicle, [veh=_vehicle, arm]{
+    Vehicle* veh = _vehicle.data();
+    if (!veh) return;
+
+    QMetaObject::invokeMethod(veh, [veh, arm] {
         veh->setArmedShowError(arm);
     }, Qt::QueuedConnection);
 }
 
 void AxisActionRouter::_emergencyStop()
 {
-    if (!_vehicle) return;
-    QMetaObject::invokeMethod(_vehicle, [veh=_vehicle]{
+    Vehicle* veh = _vehicle.data();
+    if (!veh) return;
+
+    QMetaObject::invokeMethod(veh, [veh] {
         veh->emergencyStop();
     }, Qt::QueuedConnection);
 }

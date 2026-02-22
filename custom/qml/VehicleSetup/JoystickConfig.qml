@@ -137,9 +137,47 @@ SetupPage {
 
             Loader {
                 id:             joyLoader
-                source:         pages[bar.currentIndex]
                 width:          parent.width
                 anchors.top:    bar.bottom
+
+                // ✅ FIX: ไม่ส่ง props ตอน setSource เพราะบางหน้าไม่มี property
+                function _reload() {
+                    setSource(pages[bar.currentIndex])
+                }
+
+                // ✅ หลังโหลดค่อย inject แบบปลอดภัย (เฉพาะไฟล์ที่มี property)
+                onLoaded: {
+                    var props = {
+                        "_activeJoystick": _activeJoystick,
+                        "injectedAxisRouter": (controller && controller.axisActionRouter) ? controller.axisActionRouter : null
+                    }
+
+                    if (!joyLoader.item) return
+
+                    if (joyLoader.item.hasOwnProperty("_activeJoystick")) {
+                        joyLoader.item._activeJoystick = props._activeJoystick
+                    }
+                    if (joyLoader.item.hasOwnProperty("injectedAxisRouter")) {
+                        joyLoader.item.injectedAxisRouter = props.injectedAxisRouter
+                    }
+                }
+
+                Component.onCompleted: Qt.callLater(_reload)
+
+                Connections {
+                    target: bar
+                    function onCurrentIndexChanged() { Qt.callLater(joyLoader._reload) }
+                }
+
+                Connections {
+                    target: joystickManager
+                    function onActiveJoystickChanged() { Qt.callLater(joyLoader._reload) }
+                }
+
+                Connections {
+                    target: globals
+                    function onActiveVehicleChanged() { Qt.callLater(joyLoader._reload) }
+                }
             }
         }
     }

@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- * JoystickConfigButtons.qml (Custom-ready)
+ * JoystickConfigButtons.qml (Custom-ready, merged)  ✅ with Ghost Drag Preview
  *
  ****************************************************************************/
 
@@ -23,26 +23,25 @@ ColumnLayout {
     height: availableHeight
     spacing: 0
 
-    // QGC palette
+    property var _activeJoystick: null
+    property var injectedAxisRouter: null
+
     QGCPalette {
         id: qgcPal
         colorGroupEnabled: root.enabled
     }
 
-    // Controller (ใช้กับ firmware JS buttons)
     JoystickConfigController { id: controller }
 
     property var  activeJoystick: _activeJoystick
-    property var  axisRouter: QGroundControl.corePlugin ? QGroundControl.corePlugin.axisActionRouter : null
-    property bool joystickAvailable: !!activeJoystick && (activeJoystick.connected === undefined ? true : !!activeJoystick.connected)
+    property var  axisRouter: (injectedAxisRouter ? injectedAxisRouter
+                    : (QGroundControl.corePlugin ? QGroundControl.corePlugin.axisActionRouter : null))
 
-    // limit buttons shown (เหมือนของเดิมใน QGC)
+    property bool joystickAvailable: !!activeJoystick
+        && (activeJoystick.connected === undefined ? true : !!activeJoystick.connected)
+
     property int _maxButtons: 64
 
-    // ===== Edit mode (rename + drag reorder) =====
-    property bool editMode: false
-
-    // ===== helpers: count axes/buttons (รองรับทั้ง property และ function) =====
     function _axisCount() {
         if (!activeJoystick) return 0
         var v = activeJoystick.axisCount
@@ -57,17 +56,19 @@ ColumnLayout {
         return (v === undefined || v === null) ? 0 : v
     }
 
-    // =========================
-    // ✅ Active pos tracking (from AxisActionRouter::axisActivePosChanged)
-    // =========================
-    property var _axisPosMap: ({})    // { axisNum: activePos }
-    property int _axisPosTick: 0      // force re-evaluate bindings when map changes
+    property int _axisLabelTick: 0
+    function _axisLabel(ax) {
+        _axisLabelTick
+        if (!axisRouter || !axisRouter.axisLabel) return "Axis " + ax
+        return axisRouter.axisLabel(ax)
+    }
+
+    property var _axisPosMap: ({})
+    property int _axisPosTick: 0
 
     function _getActivePos(axisNum) {
         _axisPosTick
         var v = _axisPosMap[axisNum]
-
-        // fallback: ถ้า map ยังไม่ถูกเติม (เช่น กลับหน้าใหม่) ให้ดึงจาก router ที่เก็บ stableIndex ไว้
         if (v === undefined && axisRouter && axisRouter.activePosForAxis) {
             var p = axisRouter.activePosForAxis(axisNum)
             return (p === undefined || p === null) ? -1 : p
@@ -108,11 +109,19 @@ ColumnLayout {
         _axisPosTick++
         Qt.callLater(_syncAxisRouter)
     }
+
+    onInjectedAxisRouterChanged: {
+        _axisPosMap = ({})
+        _axisPosTick++
+        Qt.callLater(_syncAxisRouter)
+    }
+
     onAxisRouterChanged: {
         _axisPosMap = ({})
         _axisPosTick++
         Qt.callLater(_syncAxisRouter)
     }
+
     onJoystickAvailableChanged: Qt.callLater(_syncAxisRouter)
 
     Connections {
@@ -122,41 +131,33 @@ ColumnLayout {
 
     Connections {
         target: activeJoystick ? activeJoystick : null
-        function onConnectedChanged() { Qt.callLater(_syncAxisRouter) }
-        function onDestroyed()        { Qt.callLater(_syncAxisRouter) }
+        ignoreUnknownSignals: true
+        function onDestroyed(obj) { Qt.callLater(_syncAxisRouter) }
     }
 
-    // รับสัญญาณตำแหน่ง active ของแต่ละ axis จาก C++
     Connections {
         target: axisRouter
+        ignoreUnknownSignals: true
         function onAxisActivePosChanged(axis, pos) {
             _axisPosMap[axis] = pos
             _axisPosTick++
         }
         function onMappingsChanged() {
             _axisPosTick++
+            _axisLabelTick++
             Qt.callLater(_refreshActivePosSnapshot)
         }
     }
 
-    // =========================
-    // Raw Button pressed display
-    // =========================
     Connections {
         target: (activeJoystick && joystickAvailable) ? activeJoystick : null
+        ignoreUnknownSignals: true
         function onRawButtonPressedChanged(index, pressed) {
-            if (buttonActionRepeater.itemAt(index)) {
-                buttonActionRepeater.itemAt(index).pressed = pressed
-            }
-            if (jsButtonActionRepeater.itemAt(index)) {
-                jsButtonActionRepeater.itemAt(index).pressed = pressed
-            }
+            if (buttonActionRepeater.itemAt(index))    buttonActionRepeater.itemAt(index).pressed = pressed
+            if (jsButtonActionRepeater.itemAt(index))  jsButtonActionRepeater.itemAt(index).pressed = pressed
         }
     }
 
-    // =========================
-    // ✅ Page vertical scroll
-    // =========================
     QGCFlickable {
         id: vScroll
         Layout.fillWidth: true
@@ -171,9 +172,6 @@ ColumnLayout {
             width: vScroll.width
             spacing: ScreenTools.defaultFontPixelHeight
 
-            // ==========================================
-            // (A) Standard Button Assignment (ของเดิม QGC)
-            // ==========================================
             ColumnLayout {
                 id: flowColumn
                 Layout.fillWidth: true
@@ -202,7 +200,7 @@ ColumnLayout {
                             property var  currentAssignableAction: activeJoystick ? activeJoystick.assignableActions.get(buttonActionCombo.currentIndex) : null
 
                             Rectangle {
-                                anchors.verticalCenter: parent.verticalCenter
+                                Layout.alignment: Qt.AlignVCenter
                                 width: ScreenTools.defaultFontPixelHeight * 1.5
                                 height: width
                                 border.width: 1
@@ -242,10 +240,8 @@ ColumnLayout {
                                 text: qsTr("Repeat")
                                 enabled: currentAssignableAction && activeJoystick.calibrated && currentAssignableAction.canRepeat
                                 onClicked: activeJoystick.setButtonRepeat(modelData, checked)
-                                Component.onCompleted: {
-                                    if (activeJoystick) checked = activeJoystick.getButtonRepeat(modelData)
-                                }
-                                anchors.verticalCenter: parent.verticalCenter
+                                Component.onCompleted: { if (activeJoystick) checked = activeJoystick.getButtonRepeat(modelData) }
+                                Layout.alignment: Qt.AlignVCenter
                             }
 
                             Item { width: ScreenTools.defaultFontPixelWidth * 2; height: 1 }
@@ -254,9 +250,6 @@ ColumnLayout {
                 }
             }
 
-            // ==========================================
-            // Firmware JS Buttons (ของเดิม QGC)
-            // ==========================================
             Column {
                 id: buttonCol
                 width: parent.width
@@ -265,21 +258,9 @@ ColumnLayout {
 
                 Row {
                     spacing: ScreenTools.defaultFontPixelWidth
-
-                    QGCLabel {
-                        horizontalAlignment: Text.AlignHCenter
-                        width: ScreenTools.defaultFontPixelHeight * 1.5
-                        text: qsTr("#")
-                    }
-                    QGCLabel {
-                        width: ScreenTools.defaultFontPixelWidth * 26
-                        text: qsTr("Function: ")
-                    }
-                    QGCLabel {
-                        width: ScreenTools.defaultFontPixelWidth * 26
-                        visible: globals.activeVehicle.supportsJSButton
-                        text: qsTr("Shift Function: ")
-                    }
+                    QGCLabel { horizontalAlignment: Text.AlignHCenter; width: ScreenTools.defaultFontPixelHeight * 1.5; text: qsTr("#") }
+                    QGCLabel { width: ScreenTools.defaultFontPixelWidth * 26; text: qsTr("Function: ") }
+                    QGCLabel { width: ScreenTools.defaultFontPixelWidth * 26; visible: globals.activeVehicle.supportsJSButton; text: qsTr("Shift Function: ") }
                 }
 
                 Repeater {
@@ -290,7 +271,7 @@ ColumnLayout {
                         spacing: ScreenTools.defaultFontPixelWidth
                         visible: globals.activeVehicle.supportsJSButton
 
-                        property var parameterName: `BTN${index}_FUNCTION`
+                        property var parameterName:      `BTN${index}_FUNCTION`
                         property var parameterShiftName: `BTN${index}_SFUNCTION`
                         property bool hasFirmwareSupport: controller.parameterExists(-1, parameterName)
 
@@ -298,7 +279,7 @@ ColumnLayout {
                         property var  currentAssignableAction: activeJoystick ? activeJoystick.assignableActions.get(buttonActionCombo.currentIndex) : null
 
                         Rectangle {
-                            anchors.verticalCenter: parent.verticalCenter
+                            Layout.alignment: Qt.AlignVCenter
                             width: ScreenTools.defaultFontPixelHeight * 1.5
                             height: width
                             border.width: 1
@@ -337,7 +318,7 @@ ColumnLayout {
                             onActivated: function (optionIndex) {
                                 var func = textAt(optionIndex)
                                 activeJoystick.setButtonAction(modelData, func)
-                                if (fact) fact.value = 0
+                                if (fact)       fact.value = 0
                                 if (fact_shift) fact_shift.value = 0
                             }
                         }
@@ -348,15 +329,12 @@ ColumnLayout {
                             text: qsTr("QGC functions do not support shift actions")
                             width: ScreenTools.defaultFontPixelWidth * 15
                             visible: hasFirmwareSupport
-                            anchors.verticalCenter: parent.verticalCenter
+                            Layout.alignment: Qt.AlignVCenter
                         }
                     }
                 }
             }
 
-            // ==========================================================
-            // (B) Custom: Axis -> Virtual Buttons
-            // ==========================================================
             Item { Layout.fillWidth: true; height: ScreenTools.defaultFontPixelHeight }
 
             Rectangle {
@@ -376,51 +354,31 @@ ColumnLayout {
                     && (activeJoystick.connected === undefined ? true : activeJoystick.connected)
 
                 visible: _joyOk && !!axisRouter
-
-                // 1 คอลัมน์เมื่อจอแคบ, 2 คอลัมน์เมื่อจอกว้าง
                 columns: (vScroll.width < (ScreenTools.defaultFontPixelWidth * 115)) ? 1 : 2
 
-                // ---------- Left (or Top): Calibrate Axis ----------
                 QGCGroupBox {
                     id: calibrateBox
                     title: qsTr("Calibrate Axis")
 
-                    // ✅ เขียวเมื่อ selectedAxis มี mapping
                     readonly property bool savedAxis: {
                         if (!axisRouter) return false
                         axisRouter.mappingSummaries
                         return axisRouter.positionsForAxis(axisRouter.selectedAxis) > 0
                     }
 
-                    // ผู้ใช้เลือก 1/2/3 ก่อนเริ่ม
                     property int desiredPositions: 3
 
-                    // ดึงเลขจาก hint เฉพาะตอน calibrating
                     readonly property int capturedCount: {
                         if (!axisRouter || !axisRouter.calibrating) return 0
                         var h = String(axisRouter.calibrationHint || "")
-                        var m = h.match(/Captured\s+(\d+)/i)
-                        if (!m) m = h.match(/(\d+)/) // fallback
-                        return m ? parseInt(m[1]) : 0
+                        var m = h.match(/Captured\s+(\d+)(?:\/(\d+))?/i)
+                        if (m && m[1]) return parseInt(m[1])
+                        var m2 = h.match(/(\d+)/)
+                        return m2 ? parseInt(m2[1]) : 0
                     }
 
                     readonly property bool readyToStop: !!axisRouter && axisRouter.calibrating && (capturedCount >= desiredPositions)
 
-                    // auto-stop (กันผู้ใช้รอนานแล้วมัน capture เพิ่ม)
-                    property bool _autoStopFired: false
-                    Timer {
-                        id: autoStopTimer
-                        interval: 120
-                        repeat: false
-                        onTriggered: {
-                            if (!axisRouter) return
-                            if (axisRouter.calibrating && calibrateBox.capturedCount >= calibrateBox.desiredPositions) {
-                                axisRouter.stopCalibration()
-                            }
-                        }
-                    }
-
-                    // steady helper
                     property real   _lastNorm: 0
                     property double _lastChangeMs: 0
                     property bool   _holdingSteady: false
@@ -439,15 +397,9 @@ ColumnLayout {
                             } else {
                                 calibrateBox._holdingSteady = (now - calibrateBox._lastChangeMs) > 250
                             }
-
-                            if (calibrateBox.readyToStop && !calibrateBox._autoStopFired) {
-                                calibrateBox._autoStopFired = true
-                                autoStopTimer.restart()
-                            }
                         }
                     }
 
-                    // watchdog: เตือนเฉพาะ "ยังไม่ขยับเลย" และ "ยังไม่จับได้สักตำแหน่ง"
                     property bool   _noMoveWarn: false
                     property bool   _moveSeen: false
                     property real   _moveLastNorm: 0
@@ -460,7 +412,6 @@ ColumnLayout {
                         onTriggered: {
                             if (!axisRouter) return
 
-                            // ✅ ถ้าจับครบหรือจับได้แล้ว ไม่เตือนแดง
                             if (calibrateBox.readyToStop || calibrateBox.capturedCount > 0) {
                                 calibrateBox._noMoveWarn = false
                                 return
@@ -491,9 +442,6 @@ ColumnLayout {
                                          ? -1
                                          : Math.max(ScreenTools.defaultFontPixelWidth * 44, vScroll.width * 0.33)
 
-                    // =========================
-                    // Modal overlay while calibrating
-                    // =========================
                     Item {
                         id: calibLockLayer
                         parent: root
@@ -548,13 +496,12 @@ ColumnLayout {
                                         QGCLabel {
                                             Layout.fillWidth: true
                                             font.bold: true
-                                            text: qsTr("Calibrating Axis %1").arg(axisRouter ? axisRouter.selectedAxis : 0)
+                                            text: qsTr("Calibrating %1 (#%2)")
+                                                .arg(axisRouter && axisRouter.axisLabel ? axisRouter.axisLabel(axisRouter.selectedAxis) : "")
+                                                .arg(axisRouter ? axisRouter.selectedAxis : 0)
                                         }
 
-                                        QGCButton {
-                                            text: qsTr("Cancel")
-                                            onClicked: { if (axisRouter) axisRouter.clearCalibration() }
-                                        }
+                                        QGCButton { text: qsTr("Cancel"); onClicked: { if (axisRouter) axisRouter.clearCalibration() } }
                                     }
 
                                     RowLayout {
@@ -573,10 +520,6 @@ ColumnLayout {
                                                 if (!axisRouter) return
                                                 axisRouter.selectedAxis = i
                                                 axisRouter.clearCalibration()
-                                                calibrateBox._autoStopFired = false
-
-                                                // ส่งจำนวน pos ที่ต้องการไป C++
-                                                axisRouter.desiredPositions = calibrateBox.desiredPositions
                                                 axisRouter.startCalibration()
 
                                                 calibrateBox._lastNorm = axisRouter.selectedAxisNorm
@@ -664,7 +607,7 @@ ColumnLayout {
                                                 visible: calibrateBox.readyToStop
                                                 color: Qt.rgba(0.2, 0.85, 0.3, 1.0)
                                                 font.bold: true
-                                                text: qsTr("Ready! Saving now…")
+                                                text: qsTr("Ready! Press Stop to save calibration.")
                                             }
 
                                             QGCLabel {
@@ -685,9 +628,6 @@ ColumnLayout {
                                             onClicked: {
                                                 if (!axisRouter) return
                                                 axisRouter.clearCalibration()
-                                                calibrateBox._autoStopFired = false
-
-                                                axisRouter.desiredPositions = calibrateBox.desiredPositions
                                                 axisRouter.startCalibration()
 
                                                 calibrateBox._lastNorm = axisRouter.selectedAxisNorm
@@ -715,15 +655,11 @@ ColumnLayout {
                         }
                     }
 
-                    // =========================
-                    // Normal box content
-                    // =========================
                     ColumnLayout {
                         anchors.margins: ScreenTools.defaultFontPixelWidth
                         anchors.fill: parent
                         spacing: ScreenTools.defaultFontPixelHeight * 0.7
 
-                        // Joystick row + A/B chips
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth * 0.8
@@ -801,7 +737,6 @@ ColumnLayout {
                             }
                         }
 
-                        // Axis picker
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth
@@ -815,16 +750,16 @@ ColumnLayout {
                                 border.width: 1
                                 border.color: calibrateBox.savedAxis
                                               ? Qt.rgba(0.2, 0.85, 0.3, 0.90)
-                                              : Qt.rgba(qgcPal.text.r, qgcPal.text.g, qgcPal.text.b, 0.55)
+                                              : Qt.rgba(qgcPal.text.r, qgcPal.text.g, qgcPal.text.b, 0.35)
 
                                 color: calibrateBox.savedAxis
-                                       ? Qt.rgba(0.2, 0.85, 0.3, 0.14)
-                                       : Qt.rgba(1, 1, 1, 1)
+                                       ? Qt.rgba(0.2, 0.85, 0.3, 0.12)
+                                       : Qt.rgba(1,1,1,0.04)
 
                                 QGCComboBox {
                                     id: axisPick
-                                    anchors.fill: parent
-                                    anchors.margins: 1
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
 
                                     enabled: !axisRouter || !axisRouter.calibrating
                                     model: axisRouter ? axisRouter.axisList : []
@@ -832,18 +767,6 @@ ColumnLayout {
                                     onActivated: (i) => axisRouter.selectedAxis = i
 
                                     background: Rectangle { color: "transparent"; radius: 6 }
-
-                                    contentItem: QGCLabel {
-                                        text: axisPick.currentText
-                                        color: calibrateBox.savedAxis
-                                               ? Qt.rgba(0.2, 0.85, 0.3, 1.0)
-                                               : Qt.rgba(0, 0, 0, 0.90)
-                                        verticalAlignment: Text.AlignVCenter
-                                        elide: Text.ElideRight
-                                        leftPadding: ScreenTools.defaultFontPixelWidth * 0.8
-                                        rightPadding: ScreenTools.defaultFontPixelWidth * 2.0
-                                        font.bold: calibrateBox.savedAxis
-                                    }
                                 }
                             }
                         }
@@ -851,18 +774,17 @@ ColumnLayout {
                         QGCLabel {
                             Layout.fillWidth: true
                             text: axisRouter ? ("raw: " + axisRouter.selectedAxisRaw
-                                               + "   norm: " + Number(axisRouter.selectedAxisNorm).toFixed(3)) : ""
+                                               + "   norm: " + Number(axisRouter.selectedAxisNorm).toFixed(1)) : ""
                             opacity: 0.85
                         }
 
                         QGCCheckBox {
-                            text: qsTr("Auto follow axis ที่ขยับ")
+                            text: qsTr("Auto follow axis")
                             enabled: !axisRouter || !axisRouter.calibrating
                             checked: axisRouter ? axisRouter.autoSelectAxis : false
                             onClicked: axisRouter.autoSelectAxis = checked
                         }
 
-                        // choose positions
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth
@@ -878,7 +800,6 @@ ColumnLayout {
                             }
                         }
 
-                        // Start button
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth
@@ -887,7 +808,8 @@ ColumnLayout {
                                 text: qsTr("Start Calibrate")
                                 enabled: !!axisRouter && !axisRouter.calibrating
                                 onClicked: {
-                                    calibrateBox._autoStopFired = false
+                                    if (axisRouter && axisRouter.hasOwnProperty("desiredPositions"))
+                                        axisRouter.desiredPositions = calibrateBox.desiredPositions
 
                                     calibrateBox._moveLastNorm = axisRouter ? axisRouter.selectedAxisNorm : 0
                                     calibrateBox._moveLastMs   = Date.now()
@@ -898,14 +820,11 @@ ColumnLayout {
                                     calibrateBox._lastChangeMs = Date.now()
                                     calibrateBox._holdingSteady = false
 
-                                    // ✅ ส่ง desiredPositions ลง C++ เพื่อกันเก็บเกิน
-                                    axisRouter.desiredPositions = calibrateBox.desiredPositions
                                     axisRouter.startCalibration()
                                 }
                             }
                         }
 
-                        // Result (หลัง stop)
                         ColumnLayout {
                             Layout.fillWidth: true
                             visible: axisRouter ? (axisRouter.calibratedPositions > 0) : false
@@ -918,245 +837,468 @@ ColumnLayout {
                     }
                 }
 
-                // ---------- Right (or Bottom): Axis → Virtual Buttons ----------
                 QGCGroupBox {
+                    id: axisMapBox
                     title: qsTr("Axis → Virtual Buttons")
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignTop
+
+                    property bool editMode: false
+
+                    ListModel { id: axisModel }
+
+                    function _syncAxisModel() {
+                        if (!axisRouter || !axisRouter.mappedAxes) {
+                            axisModel.clear()
+                            return
+                        }
+
+                        var arr = axisRouter.mappedAxes
+                        var want = []
+                        for (var i = 0; i < arr.length; i++) want.push(Number(arr[i]))
+
+                        for (var r = axisModel.count - 1; r >= 0; r--) {
+                            var ax = axisModel.get(r).axis
+                            if (want.indexOf(ax) < 0) axisModel.remove(r)
+                        }
+
+                        for (var j = 0; j < want.length; j++) {
+                            var a = want[j]
+                            var found = false
+                            for (var k = 0; k < axisModel.count; k++) {
+                                if (axisModel.get(k).axis === a) { found = true; break }
+                            }
+                            if (!found) axisModel.append({ axis: a })
+                        }
+                    }
+
+                    function _commitOrderToCpp() {
+                        if (!axisRouter || !axisRouter.setCardOrder) return
+                        var out = []
+                        for (var i = 0; i < axisModel.count; i++) out.push(axisModel.get(i).axis)
+                        axisRouter.setCardOrder(out)
+                    }
+
+                    Component.onCompleted: _syncAxisModel()
+
+                    Connections {
+                        target: axisRouter
+                        ignoreUnknownSignals: true
+                        function onMappingsChanged() { Qt.callLater(axisMapBox._syncAxisModel) }
+                    }
+
+                    property bool   _dragging: false
+                    property int    _dragAxis: -1
+                    property real   _ghostX: 0
+                    property real   _ghostY: 0
+                    property real   _ghostW: 0
+                    property real   _ghostH: 0
+                    property string _ghostTitle: ""
+
+                    function _startGhost(axisNum, cardItem) {
+                        _dragging = true
+                        _dragAxis = axisNum
+                        _ghostTitle = (axisRouter && axisRouter.axisLabel ? axisRouter.axisLabel(axisNum) : ("Axis " + axisNum)) + "  (#" + axisNum + ")"
+                        if (cardItem) {
+                            var p = ghostLayer.mapFromItem(cardItem, 0, 0)
+                            _ghostX = p.x
+                            _ghostY = p.y
+                            _ghostW = cardItem.width
+                            _ghostH = cardItem.height
+                        } else {
+                            _ghostW = ScreenTools.defaultFontPixelWidth * 44
+                            _ghostH = ScreenTools.defaultFontPixelHeight * 10
+                        }
+                    }
+
+                    function _moveGhost(fromItem, xInItem, yInItem) {
+                        if (!_dragging) return
+                        var p = ghostLayer.mapFromItem(fromItem, xInItem, yInItem)
+                        _ghostX = p.x - (_ghostW * 0.35)
+                        _ghostY = p.y - (ScreenTools.defaultFontPixelHeight * 1.2)
+                    }
+
+                    function _stopGhost() {
+                        _dragging = false
+                        _dragAxis = -1
+                    }
 
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: ScreenTools.defaultFontPixelWidth
                         spacing: ScreenTools.defaultFontPixelHeight * 0.7
 
-                        // Header row + Edit button (สีฟ้า)
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: ScreenTools.defaultFontPixelWidth
 
                             QGCLabel {
                                 Layout.fillWidth: true
-                                font.bold: true
+                                text: qsTr("Assign actions per position (Drag ⋮⋮ to reorder)")
                                 opacity: 0.9
-                                text: editMode ? qsTr("Edit mode: rename & drag to reorder") : qsTr("Assign actions per position")
+                                font.bold: true
                             }
 
                             QGCButton {
-                                text: editMode ? qsTr("Done") : qsTr("Edit")
-                                onClicked: editMode = !editMode
-                                // โทนฟ้า (ให้ดูคล้ายตัวอย่าง)
-                                primary: true
+                                text: axisMapBox.editMode ? qsTr("Done") : qsTr("Edit")
+                                implicitWidth: ScreenTools.defaultFontPixelWidth * 12
+                                onClicked: axisMapBox.editMode = !axisMapBox.editMode
                             }
                         }
 
-                        GridLayout {
-                            id: axisGrid
+                        Item {
+                            id: gridWrap
                             Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignTop
+                            implicitHeight: axisGrid.implicitHeight
+                            height: implicitHeight
 
-                            readonly property real minCardW: ScreenTools.defaultFontPixelWidth * 44
-                            columns: {
-                                var cs = columnSpacing
-                                var n = Math.floor((width + cs) / (minCardW + cs))
-                                if (n < 1) n = 1
-                                if (n > 3) n = 3
-                                return n
-                            }
+                            Item {
+                                id: ghostLayer
+                                anchors.fill: parent
+                                z: 99999
+                                visible: axisMapBox._dragging
+                                clip: false
 
-                            readonly property real cardW: {
-                                var c = columns
-                                var cs = columnSpacing
-                                var w = width - Math.max(0, (c - 1)) * cs
-                                return (c > 0) ? Math.floor(w / c) : width
-                            }
-
-                            columnSpacing: ScreenTools.defaultFontPixelWidth * 2
-                            rowSpacing: ScreenTools.defaultFontPixelHeight
-
-                            Repeater {
-                                id: axisCardRepeater
-                                model: axisRouter ? axisRouter.mappedAxes : []
-
-                                delegate: Rectangle {
-                                    id: cardRoot
-                                    readonly property real _m: ScreenTools.defaultFontPixelWidth
-                                    readonly property int axisNum: modelData
-                                    readonly property int modelIndex: index
-
-                                    readonly property int posCount: {
-                                        if (!axisRouter) return 0
-                                        axisRouter.mappingSummaries
-                                        return axisRouter.positionsForAxis(axisNum)
-                                    }
-
-                                    readonly property var acts: {
-                                        if (!axisRouter) return []
-                                        axisRouter.mappingSummaries
-                                        return axisRouter.actionsForAxis(axisNum)
-                                    }
-
-                                    readonly property int activePos: root._getActivePos(axisNum)
-                                    readonly property bool _configured: (posCount > 0)
-
-                                    // label from C++
-                                    readonly property string axisLabel: {
-                                        if (!axisRouter || !axisRouter.axisLabel) return ("Axis " + axisNum)
-                                        var t = axisRouter.axisLabel(axisNum)
-                                        return (t && String(t).trim().length > 0) ? t : ("Axis " + axisNum)
-                                    }
-
-                                    Layout.fillWidth: true
-                                    Layout.preferredWidth: axisGrid.cardW
-                                    Layout.alignment: Qt.AlignTop
-                                    Layout.preferredHeight: cardCol.implicitHeight + (_m * 2)
-
+                                Rectangle {
+                                    id: ghostCard
+                                    x: axisMapBox._ghostX
+                                    y: axisMapBox._ghostY
+                                    width: Math.max(120, axisMapBox._ghostW)
+                                    height: Math.max(80, axisMapBox._ghostH)
                                     radius: 10
-                                    border.width: 1
-                                    border.color: Qt.rgba(qgcPal.text.r, qgcPal.text.g, qgcPal.text.b, 0.55)
+                                    border.width: 2
+                                    border.color: Qt.rgba(0.2, 0.85, 0.3, 0.95)
+                                    color: Qt.rgba(0.10, 0.12, 0.14, 0.92)
+                                    opacity: 0.92
 
-                                    color: qgcPal.windowShade
-                                    opacity: 0.96
-
-                                    // ========= Drag & Drop =========
-                                    Drag.active: dragHandler.active
-                                    Drag.hotSpot.x: width / 2
-                                    Drag.hotSpot.y: height / 2
-                                    Drag.mimeData: { "application/x-axis-index": String(modelIndex) }
-
-                                    DragHandler {
-                                        id: dragHandler
-                                        enabled: root.editMode
-                                    }
-
-                                    DropArea {
-                                        anchors.fill: parent
-                                        enabled: root.editMode
-
-                                        onEntered: function(drag){
-                                            if (!axisRouter || !drag || !drag.source) return
-                                            var from = drag.source.modelIndex
-                                            var to   = cardRoot.modelIndex
-                                            if (from === to) return
-                                            // move in C++ (persist order)
-                                            axisRouter.moveMappingByIndex(from, to)
-                                        }
-                                    }
+                                    MouseArea { anchors.fill: parent; enabled: false }
 
                                     ColumnLayout {
-                                        id: cardCol
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.top: parent.top
-                                        anchors.margins: _m
-                                        spacing: ScreenTools.defaultFontPixelHeight * 0.6
+                                        anchors.fill: parent
+                                        anchors.margins: ScreenTools.defaultFontPixelWidth
+                                        spacing: ScreenTools.defaultFontPixelHeight * 0.35
 
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            spacing: ScreenTools.defaultFontPixelWidth
+                                            spacing: ScreenTools.defaultFontPixelWidth * 0.6
 
-                                            // Title / rename
-                                            Item {
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 18
-                                                height: titleRow.implicitHeight
-
-                                                RowLayout {
-                                                    id: titleRow
-                                                    anchors.fill: parent
-                                                    spacing: ScreenTools.defaultFontPixelWidth * 0.6
-
-                                                    // normal title
-                                                    QGCLabel {
-                                                        id: titleLabel
-                                                        Layout.fillWidth: true
-                                                        visible: !root.editMode
-                                                        text: cardRoot.axisLabel + (activePos >= 0 ? ("  (Pos " + activePos + ")") : "")
-                                                        font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.2
-                                                        font.bold: _configured
-                                                        color: qgcPal.text
-                                                        elide: Text.ElideRight
-                                                    }
-
-                                                    // edit title
-                                                    QGCTextField {
-                                                        id: titleEdit
-                                                        Layout.fillWidth: true
-                                                        visible: root.editMode
-                                                        text: cardRoot.axisLabel
-                                                        placeholderText: qsTr("Axis name")
-                                                        onEditingFinished: {
-                                                            if (!axisRouter || !axisRouter.setAxisLabel) return
-                                                            axisRouter.setAxisLabel(cardRoot.axisNum, text)
-                                                        }
-                                                    }
-
-                                                    // show axis number small (always)
-                                                    QGCLabel {
-                                                        opacity: 0.65
-                                                        text: "(#" + cardRoot.axisNum + ")"
-                                                        visible: root.editMode
-                                                    }
-                                                }
+                                            Rectangle {
+                                                width: ScreenTools.defaultFontPixelWidth * 0.9
+                                                height: width
+                                                radius: width/2
+                                                color: Qt.rgba(0.2, 0.85, 0.3, 0.95)
                                             }
 
-                                            QGCButton {
-                                                text: qsTr("Remove")
-                                                onClicked: axisRouter.removeMapping(axisNum)
-                                                enabled: !root.editMode  // กันเผลอกดตอนลาก
+                                            QGCLabel {
+                                                Layout.fillWidth: true
+                                                font.bold: true
+                                                elide: Text.ElideRight
+                                                text: axisMapBox._ghostTitle
+                                                color: Qt.rgba(1,1,1,0.95)
+                                            }
+
+                                            Rectangle {
+                                                height: ScreenTools.defaultFontPixelHeight * 1.3
+                                                radius: height/2
+                                                color: Qt.rgba(1,1,1,0.08)
+                                                border.width: 1
+                                                border.color: Qt.rgba(1,1,1,0.12)
+                                                implicitWidth: ghostHint.implicitWidth + ScreenTools.defaultFontPixelWidth * 1.0
+
+                                                QGCLabel {
+                                                    id: ghostHint
+                                                    anchors.centerIn: parent
+                                                    opacity: 0.85
+                                                    font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.85
+                                                    text: qsTr("Dragging…")
+                                                }
                                             }
                                         }
 
-                                        Repeater {
-                                            model: posCount
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: Qt.rgba(1,1,1,0.14)
+                                        }
 
-                                            delegate: RowLayout {
+                                        QGCLabel {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            opacity: 0.85
+                                            text: qsTr("Drop to reorder cards.")
+                                        }
+                                    }
+                                }
+                            }
+
+                            GridView {
+                                id: axisGrid
+                                anchors.fill: parent
+                                clip: false
+                                interactive: false
+
+                                implicitHeight: contentHeight
+                                height: implicitHeight
+
+                                model: axisModel
+
+                                readonly property real gap: ScreenTools.defaultFontPixelWidth * 2
+                                readonly property real minCardW: ScreenTools.defaultFontPixelWidth * 34
+
+                                readonly property real usableW: Math.max(0, gridWrap.width - ScreenTools.defaultFontPixelWidth * 2)
+
+                                readonly property int cols: (usableW >= (minCardW * 2 + gap)) ? 2 : 1
+
+                                readonly property real cardW: {
+                                    var c = cols
+                                    var usable = usableW - Math.max(0, c - 1) * gap
+                                    return Math.floor(usable / c)
+                                }
+
+                                readonly property real cellStepW: cardW + gap
+                                readonly property real cellStepH: ScreenTools.defaultFontPixelHeight * 11.0 + gap
+                                readonly property real cardH: cellStepH - gap
+
+                                cellWidth:  cellStepW
+                                cellHeight: cellStepH
+
+                                property int draggingIndex: -1
+
+                                delegate: Item {
+                                    id: cell
+                                    width: axisGrid.cardW
+                                    height: axisGrid.cardH
+
+                                    readonly property int axisNum: axis
+
+                                    Rectangle {
+                                        id: card
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        width: parent.width
+
+                                        readonly property real _m: ScreenTools.defaultFontPixelWidth
+
+                                        readonly property int posCount: {
+                                            if (!axisRouter) return 0
+                                            axisRouter.mappingSummaries
+                                            return axisRouter.positionsForAxis(cell.axisNum)
+                                        }
+
+                                        readonly property var acts: {
+                                            if (!axisRouter) return []
+                                            axisRouter.mappingSummaries
+                                            return axisRouter.actionsForAxis(cell.axisNum)
+                                        }
+
+                                        readonly property int activePos: root._getActivePos(cell.axisNum)
+                                        readonly property bool _configured: (posCount > 0)
+
+                                        height: Math.min(parent.height,
+                                                         Math.max(cardCol.implicitHeight + _m * 2,
+                                                                  ScreenTools.defaultFontPixelHeight * 8))
+
+                                        radius: 10
+                                        border.width: 1
+                                        border.color: Qt.rgba(qgcPal.text.r, qgcPal.text.g, qgcPal.text.b, 0.35)
+                                        color: Qt.rgba(1,1,1,0.04)
+
+                                        property bool dragging: false
+                                        z: dragging ? 9999 : 0
+                                        scale: dragging ? 1.02 : 1.0
+                                        opacity: (axisMapBox._dragging && axisMapBox._dragAxis === cell.axisNum) ? 0.25 : 0.98
+
+                                        ColumnLayout {
+                                            id: cardCol
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.top: parent.top
+                                            anchors.margins: card._m
+                                            spacing: ScreenTools.defaultFontPixelHeight * 0.6
+
+                                            RowLayout {
                                                 Layout.fillWidth: true
-                                                spacing: ScreenTools.defaultFontPixelWidth
+                                                spacing: ScreenTools.defaultFontPixelWidth * 0.7
 
-                                                readonly property bool _activeRow: (index === activePos)
+                                                Loader {
+                                                    Layout.fillWidth: true
+                                                    sourceComponent: axisMapBox.editMode ? editTitle : viewTitle
 
-                                                QGCLabel {
-                                                    text: "Pos " + index
-                                                    Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 7
-                                                    color: _activeRow ? Qt.rgba(0.2, 0.85, 0.3, 1.0) : qgcPal.text
-                                                    font.bold: _activeRow
+                                                    Component {
+                                                        id: viewTitle
+                                                        QGCLabel {
+                                                            Layout.fillWidth: true
+                                                            Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 18
+                                                            text: (axisRouter && axisRouter.axisLabel ? axisRouter.axisLabel(cell.axisNum) : ("Axis " + cell.axisNum))
+                                                                  + (card.activePos >= 0 ? ("  (Pos " + card.activePos + ")") : "")
+                                                                  + "  (#" + cell.axisNum + ")"
+                                                            font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.2
+                                                            font.bold: card._configured
+                                                            color: qgcPal.text
+                                                            elide: Text.ElideRight
+                                                        }
+                                                    }
+
+                                                    Component {
+                                                        id: editTitle
+                                                        Item {
+                                                            Layout.fillWidth: true
+                                                            height: nameEdit.implicitHeight
+
+                                                            QGCTextField {
+                                                                id: nameEdit
+                                                                anchors.fill: parent
+                                                                text: (axisRouter && axisRouter.axisLabel) ? axisRouter.axisLabel(cell.axisNum) : ("Axis " + cell.axisNum)
+                                                                placeholderText: qsTr("Axis name…")
+                                                                selectByMouse: true
+                                                                onEditingFinished: {
+                                                                    if (!axisRouter) return
+                                                                    if (axisRouter.setAxisLabel) {
+                                                                        axisRouter.setAxisLabel(cell.axisNum, text)
+                                                                        root._axisLabelTick++
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                 }
 
                                                 Rectangle {
-                                                    Layout.fillWidth: true
-                                                    height: actionCombo.implicitHeight + 2
+                                                    id: dragHandle
+                                                    width: ScreenTools.defaultFontPixelWidth * 3.2
+                                                    height: ScreenTools.defaultFontPixelHeight * 1.8
                                                     radius: 6
+                                                    color: Qt.rgba(1,1,1,0.06)
                                                     border.width: 1
-                                                    border.color: _activeRow
-                                                                  ? Qt.rgba(0.2, 0.85, 0.3, 0.9)
-                                                                  : Qt.rgba(qgcPal.text.r, qgcPal.text.g, qgcPal.text.b, 0.55)
+                                                    border.color: Qt.rgba(1,1,1,0.10)
+                                                    opacity: axisMapBox.editMode ? 1.0 : 0.25
 
-                                                    color: _activeRow ? Qt.rgba(0.2, 0.85, 0.3, 0.14) : "transparent"
+                                                    QGCLabel { anchors.centerIn: parent; text: "⋮⋮"; opacity: 0.8 }
 
-                                                    QGCComboBox {
-                                                        id: actionCombo
+                                                    MouseArea {
                                                         anchors.fill: parent
-                                                        anchors.margins: 1
-                                                        model: activeJoystick ? activeJoystick.assignableActionTitles : []
-                                                        enabled: !root.editMode  // edit mode = ลาก/เปลี่ยนชื่ออย่างเดียว
+                                                        enabled: axisMapBox.editMode
+                                                        hoverEnabled: true
+                                                        preventStealing: true
+                                                        propagateComposedEvents: false
 
-                                                        currentIndex: {
-                                                            if (!activeJoystick) return 0
-                                                            var t = (acts && index < acts.length) ? acts[index] : "No Action"
+                                                        onPressed: {
+                                                            card.dragging = true
+                                                            axisGrid.draggingIndex = index
+                                                            vScroll.interactive = false
 
-                                                            var i = -1
-                                                            for (var k = 0; k < activeJoystick.assignableActionTitles.length; k++) {
-                                                                if (String(activeJoystick.assignableActionTitles[k]).toLowerCase()
-                                                                    === String(t).toLowerCase()) {
-                                                                    i = k; break
-                                                                }
-                                                            }
-                                                            if (i < 0) i = activeJoystick.assignableActionTitles.indexOf("No Action")
-                                                            return (i >= 0) ? i : 0
+                                                            axisMapBox._startGhost(cell.axisNum, card)
+                                                            axisMapBox._moveGhost(dragHandle, mouseX, mouseY)
                                                         }
 
-                                                        onActivated: (i) => axisRouter.setActionForAxis(axisNum, index, textAt(i))
-                                                        background: Rectangle { color: "transparent"; radius: 6 }
+                                                        onPositionChanged: {
+                                                            if (axisGrid.draggingIndex < 0) return
+
+                                                            axisMapBox._moveGhost(dragHandle, mouseX, mouseY)
+
+                                                            var p = axisGrid.mapFromItem(dragHandle, mouseX, mouseY)
+                                                            var cx = p.x + axisGrid.contentX
+                                                            var cy = p.y + axisGrid.contentY
+
+                                                            var toIndex = axisGrid.indexAt(cx, cy)
+
+                                                            if (toIndex < 0) {
+                                                                var col = Math.floor(p.x / axisGrid.cellStepW)
+                                                                var row = Math.floor(p.y / axisGrid.cellStepH)
+                                                                if (col < 0) col = 0
+                                                                if (col >= axisGrid.cols) col = axisGrid.cols - 1
+                                                                if (row < 0) row = 0
+                                                                toIndex = row * axisGrid.cols + col
+                                                            }
+
+                                                            if (toIndex < 0) toIndex = 0
+                                                            if (toIndex >= axisModel.count) toIndex = axisModel.count - 1
+
+                                                            var fromIndex = axisGrid.draggingIndex
+                                                            if (fromIndex === toIndex) return
+
+                                                            axisModel.move(fromIndex, toIndex, 1)
+                                                            axisGrid.draggingIndex = toIndex
+                                                        }
+
+                                                        onReleased: {
+                                                            card.dragging = false
+                                                            axisGrid.draggingIndex = -1
+                                                            vScroll.interactive = true
+
+                                                            axisMapBox._stopGhost()
+                                                            axisMapBox._commitOrderToCpp()
+                                                        }
+
+                                                        onCanceled: {
+                                                            card.dragging = false
+                                                            axisGrid.draggingIndex = -1
+                                                            vScroll.interactive = true
+
+                                                            axisMapBox._stopGhost()
+                                                            axisMapBox._commitOrderToCpp()
+                                                        }
+                                                    }
+                                                }
+
+                                                QGCButton {
+                                                    text: qsTr("Remove")
+                                                    onClicked: {
+                                                        if (!axisRouter) return
+                                                        axisRouter.removeMapping(cell.axisNum)
+                                                        Qt.callLater(axisMapBox._syncAxisModel)
+                                                    }
+                                                }
+                                            }
+
+                                            Repeater {
+                                                model: card.posCount
+                                                delegate: RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: ScreenTools.defaultFontPixelWidth
+                                                    readonly property bool _activeRow: (index === card.activePos)
+
+                                                    QGCLabel {
+                                                        text: "Pos " + index
+                                                        Layout.minimumWidth: ScreenTools.defaultFontPixelWidth * 7
+                                                        color: _activeRow ? Qt.rgba(0.2, 0.85, 0.3, 1.0) : qgcPal.text
+                                                        font.bold: _activeRow
+                                                    }
+
+                                                    Rectangle {
+                                                        Layout.fillWidth: true
+                                                        height: actionCombo.implicitHeight + 2
+                                                        radius: 6
+                                                        border.width: 1
+                                                        border.color: _activeRow
+                                                                      ? Qt.rgba(0.2, 0.85, 0.3, 0.9)
+                                                                      : Qt.rgba(qgcPal.text.r, qgcPal.text.g, qgcPal.text.b, 0.30)
+                                                        color: _activeRow ? Qt.rgba(0.2, 0.85, 0.3, 0.14) : "transparent"
+
+                                                        QGCComboBox {
+                                                            id: actionCombo
+                                                            anchors.fill: parent
+                                                            anchors.margins: 1
+                                                            model: activeJoystick ? activeJoystick.assignableActionTitles : []
+
+                                                            currentIndex: {
+                                                                if (!activeJoystick) return 0
+                                                                var t = (card.acts && index < card.acts.length) ? card.acts[index] : "No Action"
+
+                                                                var i = -1
+                                                                for (var k = 0; k < activeJoystick.assignableActionTitles.length; k++) {
+                                                                    if (String(activeJoystick.assignableActionTitles[k]).toLowerCase()
+                                                                        === String(t).toLowerCase()) {
+                                                                        i = k; break
+                                                                    }
+                                                                }
+                                                                if (i < 0) i = activeJoystick.assignableActionTitles.indexOf("No Action")
+                                                                return (i >= 0) ? i : 0
+                                                            }
+
+                                                            onActivated: (i) => axisRouter.setActionForAxis(cell.axisNum, index, textAt(i))
+                                                            background: Rectangle { color: "transparent"; radius: 6 }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1167,7 +1309,7 @@ ColumnLayout {
                         }
                     }
                 }
-            } // end axisSection
-        } // end contentCol
-    } // end vScroll
-} // end root
+            }
+        }
+    }
+}
