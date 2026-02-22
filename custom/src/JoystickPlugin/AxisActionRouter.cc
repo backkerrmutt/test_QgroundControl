@@ -13,6 +13,8 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QVariant>
 #include <QtCore/QDebug>
+#include <QtCore/QFile>
+#include <QtCore/QUrl>
 
 #include <QtQml/QQmlListReference>
 #include <QtGui/QAction>
@@ -22,7 +24,6 @@
 
 QGC_LOGGING_CATEGORY(AxisActLog, "qgc.custom.axisactions")
 
-// -------------------- small helpers --------------------
 static bool _isNoAction(QString a)
 {
     a = a.trimmed();
@@ -104,7 +105,6 @@ static QAction* _extractAnyQAction(QObject* obj)
     return nullptr;
 }
 
-// -------------------- settings --------------------
 static const char* kGroup = "CustomAxisActionRouter";
 
 // -------------------- ctor --------------------
@@ -114,7 +114,7 @@ AxisActionRouter::AxisActionRouter(QObject* parent)
     _calHint = tr("Pick an axis, press Start Calibrate, move the switch through all positions, then Stop.");
 }
 
-// -------------------- UI helpers (Right side cards) --------------------
+// -------------------- UI helpers --------------------
 int AxisActionRouter::positionsForAxis(int axis) const
 {
     for (const auto& m : _stored) {
@@ -197,7 +197,6 @@ QVariantList AxisActionRouter::calibratedThresholds() const
     return out;
 }
 
-// ✅ mappedAxes: return in UI card order
 QVariantList AxisActionRouter::mappedAxes() const
 {
     return _mappedAxesOrdered();
@@ -220,7 +219,7 @@ void AxisActionRouter::setAxisLabel(int axis, const QString& label)
         _axisNames[axis] = v;
     }
     _saveToSettings();
-    emit mappingsChanged();        // ให้ QML อัปเดตทั้งฝั่ง calibrate + card ทันที
+    emit mappingsChanged();
 }
 
 void AxisActionRouter::clearAxisLabel(int axis)
@@ -258,7 +257,6 @@ void AxisActionRouter::setCardOrder(const QVariantList& order)
 
 void AxisActionRouter::_normalizeCardOrder()
 {
-    // keep only mapped axes and append any missing ones
     QVector<int> mapped;
     mapped.reserve(_stored.size());
     for (const auto& m : _stored) mapped.push_back(m.axis);
@@ -280,18 +278,15 @@ QVariantList AxisActionRouter::_mappedAxesOrdered() const
     mapped.reserve(_stored.size());
     for (const auto& m : _stored) mapped.push_back(m.axis);
 
-            // If no card order saved yet, default to stored order
     QVector<int> order = _cardOrderAxes;
     if (order.isEmpty()) order = mapped;
 
     QVariantList out;
     out.reserve(mapped.size());
 
-            // add axes in saved order
     for (int a : order) {
         if (mapped.contains(a)) out << a;
     }
-    // append missing
     for (int a : mapped) {
         if (!out.contains(a)) out << a;
     }
@@ -306,7 +301,6 @@ void AxisActionRouter::_saveToSettings() const
     QJsonObject root;
     root["ver"] = 2;
 
-            // mappings
     QJsonArray maps;
     for (const auto& m : _stored) {
         QJsonObject o;
@@ -328,9 +322,7 @@ void AxisActionRouter::_saveToSettings() const
     }
     root["maps"] = maps;
 
-            // ✅ UI section
     QJsonObject ui;
-
     QJsonObject axisNames;
     for (auto it = _axisNames.constBegin(); it != _axisNames.constEnd(); ++it) {
         axisNames[QString::number(it.key())] = it.value();
@@ -380,7 +372,6 @@ void AxisActionRouter::_loadFromSettings()
 
     const QJsonObject root = doc.object();
 
-            // ui
     const QJsonObject ui = root.value("ui").toObject();
     const QJsonObject axisNames = ui.value("axisNames").toObject();
     for (auto it = axisNames.begin(); it != axisNames.end(); ++it) {
@@ -395,7 +386,6 @@ void AxisActionRouter::_loadFromSettings()
         _cardOrderAxes.push_back(v.toInt());
     }
 
-            // maps
     const QJsonArray maps  = root.value("maps").toArray();
     for (const QJsonValue& v : maps) {
         if (!v.isObject()) continue;
@@ -431,8 +421,6 @@ void AxisActionRouter::_loadFromSettings()
     _rebuildSummaries();
     emit mappingsChanged();
     _applyMappingToUiForAxis(_selectedAxis);
-
-            // refresh active pos snapshot for UI
     emitActivePositionSnapshot();
 }
 
@@ -485,11 +473,6 @@ void AxisActionRouter::setJoystick(QObject* joystickObj)
     _jsKey = _makeJoystickKey(_js);
     _loadFromSettings();
 }
-
-// void AxisActionRouter::setVehicle(QObject* vehicleObj)
-// {
-//     _vehicle = qobject_cast<Vehicle*>(vehicleObj);
-// }
 
 void AxisActionRouter::setVehicle(QObject* vehicleObj)
 {
@@ -696,7 +679,6 @@ void AxisActionRouter::clearCalibration()
 // ---- calibration helpers ----
 void AxisActionRouter::_calibFeed(float v, qint64 nowMs)
 {
-    // ✅ hard stop: prevent capturing more than desiredPositions
     if (_desiredPositions > 0 && _stableSamples.size() >= _desiredPositions) {
         return;
     }
@@ -734,7 +716,6 @@ void AxisActionRouter::_calibFeed(float v, qint64 nowMs)
     _lastStableCommitMs = nowMs;
     _lastStableCommitV  = mean;
 
-            // ✅ hint as X/Y
     if (_desiredPositions > 0) {
         _calHint = tr("Captured %1/%2 stable position(s). Move to the next position and pause.")
         .arg(_stableSamples.size())
@@ -779,7 +760,6 @@ void AxisActionRouter::_finalizeCalibrationFromSamples()
     }
     std::sort(centers.begin(), centers.end());
 
-            // ✅ enforce desiredPositions at finalize too (extra safety)
     if (_desiredPositions > 0 && centers.size() > _desiredPositions) {
         centers = centers.mid(0, _desiredPositions);
     }
@@ -909,8 +889,6 @@ void AxisActionRouter::_onAxisValueChanged(int axis, int value)
                 ? _normalizeStored(m.actions[idxRaw])
                 : QStringLiteral("No Action");
 
-        qWarning() << "[AXMAP]" << "axis=" << axis << "idx=" << idxRaw << "norm=" << v << "action=" << action;
-
         _triggerAction(action);
     }
 }
@@ -970,24 +948,6 @@ void AxisActionRouter::clearAllMappings()
 }
 
 // -------------------- action dispatch --------------------
-// bool AxisActionRouter::_trySetVehicleFlightMode(const QString& modeTitle)
-// {
-//     if (!_vehicle) return false;
-
-//     const QString mode = modeTitle.trimmed();
-//     if (mode.isEmpty()) return false;
-
-//     if (!_vehicle->flightModes().contains(mode)) {
-//         return false;
-//     }
-
-//     QMetaObject::invokeMethod(_vehicle, [veh=_vehicle, mode] {
-//         veh->setFlightMode(mode);
-//     }, Qt::QueuedConnection);
-
-//     return true;
-// }
-
 bool AxisActionRouter::_trySetVehicleFlightMode(const QString& modeTitle)
 {
     Vehicle* veh = _vehicle.data();
@@ -1092,8 +1052,6 @@ bool AxisActionRouter::_tryTriggerViaJoystickActions(const QString& actionTitle)
         }
     }
 
-    qWarning() << "[AXMAP] cannot trigger action:" << want
-               << "class=" << actObj->metaObject()->className();
     return false;
 }
 
@@ -1121,22 +1079,6 @@ void AxisActionRouter::emitActivePositionSnapshot()
     }
 }
 
-// void AxisActionRouter::_arm(bool arm)
-// {
-//     if (!_vehicle) return;
-//     QMetaObject::invokeMethod(_vehicle, [veh=_vehicle, arm]{
-//         veh->setArmedShowError(arm);
-//     }, Qt::QueuedConnection);
-// }
-
-// void AxisActionRouter::_emergencyStop()
-// {
-//     if (!_vehicle) return;
-//     QMetaObject::invokeMethod(_vehicle, [veh=_vehicle]{
-//         veh->emergencyStop();
-//     }, Qt::QueuedConnection);
-// }
-
 void AxisActionRouter::_arm(bool arm)
 {
     Vehicle* veh = _vehicle.data();
@@ -1155,4 +1097,177 @@ void AxisActionRouter::_emergencyStop()
     QMetaObject::invokeMethod(veh, [veh] {
         veh->emergencyStop();
     }, Qt::QueuedConnection);
+}
+
+// =========================
+// Profile export/import
+// =========================
+QString AxisActionRouter::_fileUrlToLocalPath(const QUrl& url)
+{
+    if (!url.isValid()) return QString();
+    if (url.isLocalFile()) return url.toLocalFile();
+
+    const QString s = url.toString();
+    if (s.startsWith("file:", Qt::CaseInsensitive)) {
+        return QUrl(s).toLocalFile();
+    }
+    return QString();
+}
+
+QString AxisActionRouter::exportProfileJson() const
+{
+    QJsonObject root;
+    root["ver"] = 1;
+    root["when"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+
+    QJsonObject ui;
+
+    QJsonObject axisNames;
+    for (auto it = _axisNames.constBegin(); it != _axisNames.constEnd(); ++it) {
+        axisNames[QString::number(it.key())] = it.value();
+    }
+    ui["axisNames"] = axisNames;
+
+    QJsonArray order;
+    for (int a : _cardOrderAxes) order.append(a);
+    ui["cardOrder"] = order;
+
+    root["ui"] = ui;
+
+    QJsonArray maps;
+    for (const auto& m : _stored) {
+        QJsonObject o;
+        o["axis"] = m.axis;
+
+        QJsonArray centers;
+        for (float c : m.centers) centers.append(c);
+        o["centers"] = centers;
+
+        QJsonArray th;
+        for (float t : m.thresholds) th.append(t);
+        o["thresholds"] = th;
+
+        QJsonArray actions;
+        for (const QString& a : m.actions) actions.append(_normalizeStored(a));
+        o["actions"] = actions;
+
+        maps.append(o);
+    }
+    root["maps"] = maps;
+
+    return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Indented));
+}
+
+QString AxisActionRouter::importProfileJson(const QString& jsonText)
+{
+    if (jsonText.trimmed().isEmpty()) return QStringLiteral("Empty JSON");
+
+    QJsonParseError pe{};
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonText.toUtf8(), &pe);
+    if (pe.error != QJsonParseError::NoError || !doc.isObject()) {
+        return QStringLiteral("JSON parse error: %1").arg(pe.errorString());
+    }
+
+    const QJsonObject root = doc.object();
+
+    const QJsonObject ui = root.value("ui").toObject();
+
+            // axis names
+    const QJsonObject axisNames = ui.value("axisNames").toObject();
+    QHash<int, QString> nextNames;
+    for (auto it = axisNames.begin(); it != axisNames.end(); ++it) {
+        bool ok = false;
+        const int a = it.key().toInt(&ok);
+        if (!ok) continue;
+        const QString name = it.value().toString().trimmed();
+        if (!name.isEmpty()) nextNames[a] = name;
+    }
+
+            // card order
+    QVector<int> nextOrder;
+    const QJsonArray order = ui.value("cardOrder").toArray();
+    for (const QJsonValue& v : order) {
+        if (!v.isDouble()) continue;
+        const int a = v.toInt();
+        if (!nextOrder.contains(a)) nextOrder.push_back(a);
+    }
+
+            // maps
+    QVector<StoredMapping> nextStored;
+    const QJsonArray maps  = root.value("maps").toArray();
+    for (const QJsonValue& v : maps) {
+        if (!v.isObject()) continue;
+        const QJsonObject o = v.toObject();
+
+        StoredMapping m;
+        m.axis = o.value("axis").toInt(-1);
+
+        for (const QJsonValue& x : o.value("centers").toArray())    m.centers.append(float(x.toDouble()));
+        for (const QJsonValue& x : o.value("thresholds").toArray()) m.thresholds.append(float(x.toDouble()));
+        for (const QJsonValue& x : o.value("actions").toArray())    m.actions.append(_normalizeStored(x.toString()));
+
+        const int positions = _positionsCount(m.centers, m.thresholds);
+        while (m.actions.size() < positions) m.actions << "No Action";
+        if (m.actions.size() > positions) m.actions = m.actions.mid(0, positions);
+
+        m.stableIndex = -999;
+        m.pendingIndex = -999;
+        m.pendingSinceMs = 0;
+        m.lastFireMs = 0;
+
+        if (m.axis < 0 || m.centers.isEmpty()) continue;
+
+        int found = -1;
+        for (int i = 0; i < nextStored.size(); ++i) {
+            if (nextStored[i].axis == m.axis) { found = i; break; }
+        }
+        if (found >= 0) nextStored[found] = m;
+        else            nextStored.push_back(m);
+    }
+
+    _axisNames = nextNames;
+    _stored = nextStored;
+    _cardOrderAxes = nextOrder;
+
+    _normalizeCardOrder();
+    _rebuildSummaries();
+    _saveToSettings();
+
+    emit mappingsChanged();
+    _applyMappingToUiForAxis(_selectedAxis);
+    emitActivePositionSnapshot();
+
+    return QString();
+}
+
+QString AxisActionRouter::exportProfileToFile(const QUrl& fileUrl) const
+{
+    const QString path = _fileUrlToLocalPath(fileUrl);
+    if (path.isEmpty()) return QStringLiteral("Invalid file path");
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return QStringLiteral("Cannot write file: %1").arg(f.errorString());
+    }
+    const QByteArray data = exportProfileJson().toUtf8();
+    if (f.write(data) != data.size()) {
+        return QStringLiteral("Write failed");
+    }
+    f.close();
+    return QString();
+}
+
+QString AxisActionRouter::importProfileFromFile(const QUrl& fileUrl)
+{
+    const QString path = _fileUrlToLocalPath(fileUrl);
+    if (path.isEmpty()) return QStringLiteral("Invalid file path");
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        return QStringLiteral("Cannot read file: %1").arg(f.errorString());
+    }
+    const QByteArray data = f.readAll();
+    f.close();
+
+    return importProfileJson(QString::fromUtf8(data));
 }

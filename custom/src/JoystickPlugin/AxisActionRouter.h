@@ -7,6 +7,7 @@
 #include <QtCore/QPair>
 #include <QtCore/QHash>
 #include <QtCore/QPointer>
+#include <QtCore/QUrl>
 
 class Vehicle;
 class Joystick;
@@ -15,19 +16,15 @@ class AxisActionRouter : public QObject
 {
     Q_OBJECT
 
-            // Axis picker + live values
     Q_PROPERTY(QStringList axisList READ axisList NOTIFY axisListChanged)
     Q_PROPERTY(int selectedAxis READ selectedAxis WRITE setSelectedAxis NOTIFY selectedAxisChanged)
     Q_PROPERTY(int selectedAxisRaw READ selectedAxisRaw NOTIFY selectedAxisValueChanged)
     Q_PROPERTY(float selectedAxisNorm READ selectedAxisNorm NOTIFY selectedAxisValueChanged)
 
-            // Auto follow axis
     Q_PROPERTY(bool autoSelectAxis READ autoSelectAxis WRITE setAutoSelectAxis NOTIFY autoSelectAxisChanged)
 
-            // Axes that have mappings (ordered for UI)
     Q_PROPERTY(QVariantList mappedAxes READ mappedAxes NOTIFY mappingsChanged)
 
-            // Calibration
     Q_PROPERTY(bool calibrating READ calibrating NOTIFY calibratingChanged)
     Q_PROPERTY(int desiredPositions READ desiredPositions WRITE setDesiredPositions NOTIFY desiredPositionsChanged)
     Q_PROPERTY(int calibratedPositions READ calibratedPositions NOTIFY calibrationChanged)
@@ -35,7 +32,6 @@ class AxisActionRouter : public QObject
     Q_PROPERTY(QVariantList calibratedThresholds READ calibratedThresholds NOTIFY calibrationChanged)
     Q_PROPERTY(QString calibrationHint READ calibrationHint NOTIFY calibrationChanged)
 
-            // Stored mapping summaries
     Q_PROPERTY(QStringList mappingSummaries READ mappingSummaries NOTIFY mappingsChanged)
 
    public:
@@ -44,25 +40,26 @@ class AxisActionRouter : public QObject
     Q_INVOKABLE void setJoystick(QObject* joystickObj);
     Q_INVOKABLE void setVehicle(QObject* vehicleObj);
 
-            // --- UI helper for per-axis cards (Right side) ---
     Q_INVOKABLE int positionsForAxis(int axis) const;
     Q_INVOKABLE QStringList actionsForAxis(int axis) const;
     Q_INVOKABLE void setActionForAxis(int axis, int posIndex, const QString& action);
 
-            // --- runtime highlight (QML) ---
     Q_INVOKABLE int activePosForAxis(int axis) const;
-
-            // QML snapshot on return to page
     Q_INVOKABLE void emitActivePositionSnapshot();
 
-            // Axis label (rename)
     Q_INVOKABLE QString axisLabel(int axis) const;
     Q_INVOKABLE void setAxisLabel(int axis, const QString& label);
     Q_INVOKABLE void clearAxisLabel(int axis);
 
-            // Card order (drag reorder)
     Q_INVOKABLE QVariantList cardOrder() const;
     Q_INVOKABLE void setCardOrder(const QVariantList& order);
+
+            // Profile export/import
+    Q_INVOKABLE QString exportProfileJson() const;
+    Q_INVOKABLE QString importProfileJson(const QString& jsonText);
+
+    Q_INVOKABLE QString exportProfileToFile(const QUrl& fileUrl) const;
+    Q_INVOKABLE QString importProfileFromFile(const QUrl& fileUrl);
 
     QStringList axisList() const { return _axisList; }
 
@@ -93,7 +90,6 @@ class AxisActionRouter : public QObject
     Q_INVOKABLE void stopCalibration();
     Q_INVOKABLE void clearCalibration();
 
-            // mapping management
     Q_INVOKABLE void removeMapping(int axis);
     Q_INVOKABLE void clearAllMappings();
 
@@ -111,7 +107,6 @@ class AxisActionRouter : public QObject
     void mappingsChanged();
 
     void requestTriggerQgcAction(const QString& actionTitle);
-
     void axisActivePosChanged(int axis, int pos);
 
    private slots:
@@ -162,6 +157,8 @@ class AxisActionRouter : public QObject
     QVariantList _mappedAxesOrdered() const;
     void _normalizeCardOrder();
 
+    static QString _fileUrlToLocalPath(const QUrl& url);
+
    private:
     QPointer<Vehicle> _vehicle;
     Joystick* _js = nullptr;
@@ -178,7 +175,6 @@ class AxisActionRouter : public QObject
     int    _lastAutoAxis   = -1;
 
     bool _calibrating = false;
-
     int _desiredPositions = 3;
 
     QVector<QPair<qint64, float>> _win;

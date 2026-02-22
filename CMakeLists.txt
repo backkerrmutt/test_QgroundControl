@@ -41,8 +41,27 @@ endif()
 
 include(Git)
 
+# ==========================================================
+# FIX: Make sure project(VERSION ...) always gets numeric x.y.z
+# QGC_APP_VERSION may be something like "v5.0.0", "version-1.0.0",
+# or even broken "ersion-1.0.0". CMake requires x.y.z only.
+# ==========================================================
+
+set(_qgc_ver_in "${QGC_APP_VERSION}")
+
+# Extract first semver pattern x.y.z from any string
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" QGC_PROJECT_VERSION "${_qgc_ver_in}")
+
+# Fallback if nothing found
+if(NOT QGC_PROJECT_VERSION)
+    set(QGC_PROJECT_VERSION "5.0.0")
+endif()
+
+message(STATUS "QGC_APP_VERSION raw      = '${_qgc_ver_in}'")
+message(STATUS "QGC_PROJECT_VERSION used = '${QGC_PROJECT_VERSION}'")
+
 project(${QGC_APP_NAME}
-    VERSION ${QGC_APP_VERSION}
+    VERSION ${QGC_PROJECT_VERSION}
     DESCRIPTION ${QGC_APP_DESCRIPTION}
     HOMEPAGE_URL ${QGC_ORG_DOMAIN}
     LANGUAGES C CXX
@@ -159,8 +178,8 @@ endif()
 #               Qt6 Configuration
 #######################################################
 
-# The values specified below are the ONLY supported configurations for this version of QGC. 
-# Change these to something else at your own risk. Anything other than what is specified 
+# The values specified below are the ONLY supported configurations for this version of QGC.
+# Change these to something else at your own risk. Anything other than what is specified
 # here is unsupported so don't expect any help with problems.
 
 if(QGC_ENABLE_HERELINK AND ANDROID)
@@ -299,8 +318,6 @@ qt_add_executable(${CMAKE_PROJECT_NAME}
     WIN32
     MACOSX_BUNDLE
     ${QGC_RESOURCES}
-    custom/src/JoystickPlugin/CustomJoystickConfigController.h
-    custom/src/JoystickPlugin/CustomJoystickConfigController.cc
 )
 
 if(WIN32)
