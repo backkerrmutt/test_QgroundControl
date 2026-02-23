@@ -9,6 +9,11 @@
 #include <QtCore/qapplicationstatic.h>
 #include <QtQml/QQmlApplicationEngine>
 
+#include <QtCore/QSet>
+#include "MultiVehicleManager.h"
+#include "Vehicle.h"
+#include <QtGui/QAction>
+
 // ✅ สำคัญ: register QML types
 #include <QtQml/qqml.h>
 #include "CustomJoystickConfigController.h"
@@ -80,8 +85,10 @@ CustomPlugin::CustomPlugin(QObject *parent)
 
     // _showAdvancedUI = false;
     _showAdvancedUI = true;
-    connect(this, &QGCCorePlugin::showAdvancedUIChanged,
-            this, &CustomPlugin::_advancedChanged);
+    QObject::connect(this, &QGCCorePlugin::showAdvancedUIChanged,
+                     this, &CustomPlugin::_advancedChanged);
+    // connect(this, &QGCCorePlugin::showAdvancedUIChanged,
+    //         this, &CustomPlugin::_advancedChanged);
 }
 
 void CustomPlugin::registerQmlTypes()

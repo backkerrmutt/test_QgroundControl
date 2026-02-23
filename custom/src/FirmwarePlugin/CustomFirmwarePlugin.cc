@@ -19,13 +19,13 @@
 //-----------------------------------------------------------------------------
 CustomFirmwarePlugin::CustomFirmwarePlugin()
 {
-    for (auto &mode: _flightModeList){
-        //-- Narrow the flight mode options to only these
-        if(mode.mode_name != _holdFlightMode && mode.mode_name != _rtlFlightMode && mode.mode_name != _missionFlightMode){
-            // No other flight modes can be set
-            mode.canBeSet = false;
-        }
-    }
+    // for (auto &mode: _flightModeList){
+    //     //-- Narrow the flight mode options to only these
+    //     if(mode.mode_name != _holdFlightMode && mode.mode_name != _rtlFlightMode && mode.mode_name != _missionFlightMode){
+    //         // No other flight modes can be set
+    //         mode.canBeSet = false;
+    //     }
+    // }
 }
 
 //-----------------------------------------------------------------------------
@@ -136,7 +136,8 @@ void CustomFirmwarePlugin::updateAvailableFlightModes(FlightModeList &modeList)
         case PX4CustomMode::AUTO_READY        :
         case PX4CustomMode::AUTO_RTGS         :
         case PX4CustomMode::AUTO_TAKEOFF      :
-            mode.canBeSet = false;
+            // mode.canBeSet = false;
+            mode.canBeSet = true;
             break;
         }
     }

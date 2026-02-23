@@ -104,7 +104,6 @@ static QAction* _extractAnyQAction(QObject* obj)
 
     return nullptr;
 }
-
 static const char* kGroup = "CustomAxisActionRouter";
 
 // -------------------- ctor --------------------

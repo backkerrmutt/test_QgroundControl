@@ -99,6 +99,17 @@ ColumnLayout {
         _refreshActivePosSnapshot()
     }
 
+    function _actionModelWithFlightModes() {
+        var base = (activeJoystick && activeJoystick.assignableActionTitles) ? activeJoystick.assignableActionTitles : []
+        var modes = (axisRouter && axisRouter.allFlightModes) ? axisRouter.allFlightModes() : []
+        var out = []
+        for (var i=0; i<base.length; i++) out.push(base[i])
+        for (var j=0; j<modes.length; j++) {
+            if (out.indexOf(modes[j]) < 0) out.push(modes[j])
+        }
+        return out
+    }
+
     Component.onCompleted: Qt.callLater(_syncAxisRouter)
 
     onActiveJoystickChanged: {
@@ -312,7 +323,8 @@ ColumnLayout {
                             QGCComboBox {
                                 id: buttonActionCombo
                                 width: ScreenTools.defaultFontPixelWidth * 26
-                                model: activeJoystick ? activeJoystick.assignableActionTitles : []
+                                // model: activeJoystick ? activeJoystick.assignableActionTitles : []
+                                model: _actionModelWithFlightModes()
                                 sizeToContents: true
 
                                 function _findCurrentButtonAction() {
@@ -1414,7 +1426,8 @@ ColumnLayout {
                                                             id: actionCombo
                                                             anchors.fill: parent
                                                             anchors.margins: 1
-                                                            model: activeJoystick ? activeJoystick.assignableActionTitles : []
+                                                            // model: activeJoystick ? activeJoystick.assignableActionTitles : []
+                                                            model: _actionModelWithFlightModes()
 
                                                             currentIndex: {
                                                                 if (!activeJoystick) return 0

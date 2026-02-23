@@ -41,5 +41,6 @@
     <qresource prefix="/qml">
        <file alias="JoystickConfigButtons.qml">qml/VehicleSetup/JoystickConfigButtons.qml</file>
        <file alias="JoystickConfig.qml">qml/VehicleSetup/JoystickConfig.qml</file>
+       <file alias="QGroundControl/Controls/FlightModeIndicator.qml">qml/UI/toolbar/FlightModeIndicator_custom.qml</file>
     </qresource>
 </RCC>

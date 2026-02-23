@@ -6,6 +6,8 @@
 #include "QGCCorePlugin.h"
 #include "QGCOptions.h"
 #include "QGCLoggingCategory.h"
+#include <QtCore/QPointer>
+#include <QtCore/QVariantList>
 
 class FactMetaData;
 class QQmlApplicationEngine;
@@ -56,6 +58,7 @@ class CustomPlugin : public QGCCorePlugin
     explicit CustomPlugin(QObject* parent = nullptr);
     ~CustomPlugin() override;
 
+
     static QGCCorePlugin* instance();
     static void registerQmlTypes();
 
@@ -83,4 +86,5 @@ class CustomPlugin : public QGCCorePlugin
     QVariantList   _customSettingsList;
 
     AxisActionRouter* _axisActionRouter = nullptr;
+
 };
