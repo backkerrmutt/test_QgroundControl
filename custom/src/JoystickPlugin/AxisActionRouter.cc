@@ -841,9 +841,25 @@ void AxisActionRouter::_onAxisValueChanged(int axis, int value)
         if (m.axis != axis) continue;
         if (m.centers.isEmpty()) continue;
 
-        const int idxRaw = m.thresholds.isEmpty()
-                               ? _nearestCenterIndex(v, m.centers)
-                               : _indexFromThresholds(v, m.thresholds);
+        // const int idxRaw = m.thresholds.isEmpty()
+        //                        ? _nearestCenterIndex(v, m.centers)
+        //                        : _indexFromThresholds(v, m.thresholds);
+
+        // --- FIX: single-position mapping should be active only near calibrated center
+        int idxRaw = -1;
+        const int posCount = _positionsCount(m.centers, m.thresholds);
+
+        if (posCount == 1 && m.centers.size() == 1) {
+            // Only active when close to the calibrated center
+            constexpr float kSinglePosEps = 0.20f;   // tune if needed (0.15..0.25)
+            const float c = m.centers[0];
+            idxRaw = (qAbs(v - c) <= kSinglePosEps) ? 0 : -1;
+        } else {
+            // 2/3 positions: keep original behavior (NO CHANGE)
+            idxRaw = m.thresholds.isEmpty()
+                         ? _nearestCenterIndex(v, m.centers)
+                         : _indexFromThresholds(v, m.thresholds);
+        }
 
         const int prevStable = m.stableIndex;
 
@@ -879,6 +895,8 @@ void AxisActionRouter::_onAxisValueChanged(int axis, int value)
         if (m.stableIndex != prevStable) {
             emit axisActivePosChanged(axis, m.stableIndex);
         }
+
+        if (idxRaw < 0) continue;   // only affects 1-pos when value is outside calibrated zone
 
         if ((now - m.lastFireMs) < minGapMs) continue;
         m.lastFireMs = now;
