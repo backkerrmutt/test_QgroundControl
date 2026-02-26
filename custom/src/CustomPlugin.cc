@@ -27,18 +27,6 @@ QGC_LOGGING_CATEGORY(CustomLog, "gcs.custom.customplugin")
 // [custom-example pattern] Singleton instance (used by CustomPlugin::instance()).
 Q_APPLICATION_STATIC(CustomPlugin, _customPluginInstance);
 
-// =====================================================================
-// [Joystick Module] Q_PROPERTY getter implementation
-//
-// QML reads:
-//   QGroundControl.corePlugin.axisActionRouter
-//
-// We return as QObject* so QML can call Q_INVOKABLE methods on it.
-// =====================================================================
-QObject* CustomPlugin::axisActionRouter() const
-{
-    return static_cast<QObject*>(_axisActionRouter);
-}
 
 //-----------------------------------------------------------------------------
 // CustomFlyViewOptions (unchanged)
@@ -80,6 +68,20 @@ bool CustomOptions::showFirmwareUpgrade(void) const
 bool CustomOptions::wifiReliableForCalibration(void) const
 {
     return true;
+}
+
+
+// =====================================================================
+// [Joystick Module] Q_PROPERTY getter implementation
+//
+// QML reads:
+//   QGroundControl.corePlugin.axisActionRouter
+//
+// We return as QObject* so QML can call Q_INVOKABLE methods on it.
+// =====================================================================
+QObject* CustomPlugin::axisActionRouter() const
+{
+    return static_cast<QObject*>(_axisActionRouter);
 }
 
 //-----------------------------------------------------------------------------
