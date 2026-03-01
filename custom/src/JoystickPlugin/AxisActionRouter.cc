@@ -14,7 +14,11 @@
 #include <QtCore/QVariant>
 #include <QtCore/QDebug>
 #include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QUrl>
+#include <QtCore/QDir>
+#include <QtCore/QStandardPaths>
+#include <QtCore/QCoreApplication>
 
 #include <QtQml/QQmlListReference>
 #include <QtGui/QAction>
@@ -106,11 +110,62 @@ static QAction* _extractAnyQAction(QObject* obj)
 }
 static const char* kGroup = "CustomAxisActionRouter";
 
+// -------------------- Repeat Action --------------------
+static QString _normalizeTitleKey(QString s)
+{
+    s = s.trimmed();
+    s.remove('&');
+    return s.toLower();
+}
+
+static QString _cleanActionText(QString s)
+{
+    s = s.trimmed();
+    s.remove('&');
+    return s.trimmed();
+}
+
+static QStringList _variantToStringList(const QVariant& v)
+{
+    if (!v.isValid()) return {};
+    if (v.canConvert<QStringList>()) return v.toStringList();
+    if (v.typeId() == QMetaType::QVariantList) {
+        const QVariantList vl = v.toList();
+        QStringList out; out.reserve(vl.size());
+        for (const QVariant& it : vl) out << it.toString();
+        return out;
+    }
+    return {};
+}
+
+// -------------------- ActionConfig directory --------------------
+static QString _actionConfigDirPath()
+{
+    QString docs = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (docs.isEmpty()) {
+        docs = QDir::homePath();
+    }
+
+    QString appName = QCoreApplication::applicationName().trimmed();
+    if (appName.isEmpty()) {
+        appName = QStringLiteral("QGroundControl");
+    }
+
+    const QString appDir = QDir(docs).filePath(appName);
+    const QString cfgDir = QDir(appDir).filePath(QStringLiteral("ActionConfig"));
+    QDir().mkpath(cfgDir);
+    return cfgDir;
+}
+
 // -------------------- ctor --------------------
 AxisActionRouter::AxisActionRouter(QObject* parent)
     : QObject(parent)
 {
     _calHint = tr("Pick an axis, press Start Calibrate, move the switch through all positions, then Stop.");
+
+    _repeatTimer.setInterval(_repeatIntervalMs);
+    _repeatTimer.setSingleShot(false);
+    connect(&_repeatTimer, &QTimer::timeout, this, &AxisActionRouter::_onRepeatTick);
 }
 
 // -------------------- UI helpers --------------------
@@ -144,8 +199,12 @@ void AxisActionRouter::setActionForAxis(int axis, int posIndex, const QString& a
     if (!m) return;
 
     const int positions = _positionsCount(m->centers, m->thresholds);
+
     while (m->actions.size() < positions) m->actions << "No Action";
-    if (m->actions.size() > positions) m->actions = m->actions.mid(0, positions);
+    if (m->actions.size() > positions)    m->actions = m->actions.mid(0, positions);
+
+    while (m->repeats.size() < positions) m->repeats.push_back(false);
+    if (m->repeats.size() > positions)    m->repeats = m->repeats.mid(0, positions);
 
     if (posIndex >= m->actions.size()) return;
     if (m->actions[posIndex] == a) return;
@@ -155,8 +214,9 @@ void AxisActionRouter::setActionForAxis(int axis, int posIndex, const QString& a
     _rebuildSummaries();
     _saveToSettings();
     emit mappingsChanged();
-}
 
+    _updateRepeatTimerRunning();
+}
 // -------------------- properties --------------------
 void AxisActionRouter::setAutoSelectAxis(bool v)
 {
@@ -292,6 +352,45 @@ QVariantList AxisActionRouter::_mappedAxesOrdered() const
     return out;
 }
 
+// -------------------- Repeat Action --------------------
+QAction* AxisActionRouter::_findAppQActionByTitle(const QString& actionTitle) const
+{
+    const QString key = _normalizeTitleKey(actionTitle);
+    if (key.isEmpty()) return nullptr;
+
+    const QPointer<QAction> cached = _appActionCache.value(key);
+    if (cached) return cached.data();
+
+    const QList<QAction*> all = qApp ? qApp->findChildren<QAction*>() : QList<QAction*>();
+    for (QAction* a : all) {
+        if (!a) continue;
+
+        const QString txt = _cleanActionText(a->text());
+        if (!txt.isEmpty() && _normalizeTitleKey(txt) == key) {
+            _appActionCache.insert(key, a);
+            return a;
+        }
+
+        const QString on = a->objectName().trimmed();
+        if (!on.isEmpty() && _normalizeTitleKey(on) == key) {
+            _appActionCache.insert(key, a);
+            return a;
+        }
+    }
+
+    return nullptr;
+}
+
+bool AxisActionRouter::_tryTriggerViaAppActions(const QString& actionTitle) const
+{
+    if (actionTitle.trimmed().isEmpty()) return false;
+    QAction* qa = _findAppQActionByTitle(actionTitle);
+    if (!qa) return false;
+
+    QMetaObject::invokeMethod(qa, "trigger", Qt::QueuedConnection);
+    return true;
+}
+
 // -------------------- persistent save/load --------------------
 void AxisActionRouter::_saveToSettings() const
 {
@@ -316,6 +415,10 @@ void AxisActionRouter::_saveToSettings() const
         QJsonArray actions;
         for (const QString& a : m.actions) actions.append(_normalizeStored(a));
         o["actions"] = actions;
+
+        QJsonArray rep;
+        for (bool r : m.repeats) rep.append(r);
+        o["repeat"] = rep;
 
         maps.append(o);
     }
@@ -350,6 +453,7 @@ void AxisActionRouter::_loadFromSettings()
 
     if (_jsKey.isEmpty()) {
         emit mappingsChanged();
+        _updateRepeatTimerRunning();
         return;
     }
 
@@ -360,12 +464,14 @@ void AxisActionRouter::_loadFromSettings()
 
     if (raw.isEmpty()) {
         emit mappingsChanged();
+        _updateRepeatTimerRunning();
         return;
     }
 
     const QJsonDocument doc = QJsonDocument::fromJson(raw);
     if (!doc.isObject()) {
         emit mappingsChanged();
+        _updateRepeatTimerRunning();
         return;
     }
 
@@ -379,13 +485,14 @@ void AxisActionRouter::_loadFromSettings()
         if (!ok) continue;
         _axisNames[a] = it.value().toString();
     }
+
     const QJsonArray order = ui.value("cardOrder").toArray();
     for (const QJsonValue& v : order) {
         if (!v.isDouble()) continue;
         _cardOrderAxes.push_back(v.toInt());
     }
 
-    const QJsonArray maps  = root.value("maps").toArray();
+    const QJsonArray maps = root.value("maps").toArray();
     for (const QJsonValue& v : maps) {
         if (!v.isObject()) continue;
         const QJsonObject o = v.toObject();
@@ -397,14 +504,22 @@ void AxisActionRouter::_loadFromSettings()
         for (const QJsonValue& x : o.value("thresholds").toArray()) m.thresholds.append(float(x.toDouble()));
         for (const QJsonValue& x : o.value("actions").toArray())    m.actions.append(_normalizeStored(x.toString()));
 
+                // NEW: read repeats
+        for (const QJsonValue& x : o.value("repeat").toArray())     m.repeats.append(x.toBool(false));
+
         const int positions = _positionsCount(m.centers, m.thresholds);
+
         while (m.actions.size() < positions) m.actions << "No Action";
-        if (m.actions.size() > positions) m.actions = m.actions.mid(0, positions);
+        if (m.actions.size() > positions)    m.actions = m.actions.mid(0, positions);
+
+        while (m.repeats.size() < positions) m.repeats.push_back(false);
+        if (m.repeats.size() > positions)    m.repeats = m.repeats.mid(0, positions);
 
         m.stableIndex = -999;
         m.pendingIndex = -999;
         m.pendingSinceMs = 0;
         m.lastFireMs = 0;
+        m.lastRepeatMs = 0;
 
         if (m.axis < 0 || m.centers.isEmpty()) continue;
 
@@ -419,8 +534,11 @@ void AxisActionRouter::_loadFromSettings()
     _normalizeCardOrder();
     _rebuildSummaries();
     emit mappingsChanged();
+
     _applyMappingToUiForAxis(_selectedAxis);
     emitActivePositionSnapshot();
+
+    _updateRepeatTimerRunning();
 }
 
 void AxisActionRouter::_rebuildSummaries()
@@ -606,8 +724,11 @@ void AxisActionRouter::stopCalibration()
     if (_calCenters.isEmpty()) {
         emit calibratingChanged();
         emit calibrationChanged();
+        _updateRepeatTimerRunning();
         return;
     }
+
+    const int positionsNew = _positionsCount(_calCenters, _calThresholds);
 
     StoredMapping* m = _findMapping(_selectedAxis);
     if (!m) {
@@ -617,31 +738,38 @@ void AxisActionRouter::stopCalibration()
         nm.thresholds = _calThresholds;
         nm.actions    = _pendingActions;
 
-        const int positions = _positionsCount(nm.centers, nm.thresholds);
-        while (nm.actions.size() < positions) nm.actions << "No Action";
-        if (nm.actions.size() > positions) nm.actions = nm.actions.mid(0, positions);
+        while (nm.actions.size() < positionsNew) nm.actions << "No Action";
+        if (nm.actions.size() > positionsNew)    nm.actions = nm.actions.mid(0, positionsNew);
+
+        nm.repeats = QVector<bool>(positionsNew, false);
 
         nm.stableIndex = -999;
         nm.pendingIndex = -999;
         nm.pendingSinceMs = 0;
         nm.lastFireMs = 0;
+        nm.lastRepeatMs = 0;
 
         _stored.push_back(nm);
     } else {
         const QStringList oldActions = m->actions;
+        const QVector<bool> oldRepeats = m->repeats;
 
         m->centers    = _calCenters;
         m->thresholds = _calThresholds;
 
-        const int positions = _positionsCount(m->centers, m->thresholds);
         m->actions = oldActions;
-        while (m->actions.size() < positions) m->actions << "No Action";
-        if (m->actions.size() > positions) m->actions = m->actions.mid(0, positions);
+        while (m->actions.size() < positionsNew) m->actions << "No Action";
+        if (m->actions.size() > positionsNew)    m->actions = m->actions.mid(0, positionsNew);
+
+        m->repeats = oldRepeats;
+        while (m->repeats.size() < positionsNew) m->repeats.push_back(false);
+        if (m->repeats.size() > positionsNew)    m->repeats = m->repeats.mid(0, positionsNew);
 
         m->stableIndex = -999;
         m->pendingIndex = -999;
         m->pendingSinceMs = 0;
         m->lastFireMs = 0;
+        m->lastRepeatMs = 0;
     }
 
     _normalizeCardOrder();
@@ -655,6 +783,8 @@ void AxisActionRouter::stopCalibration()
 
     emit calibratingChanged();
     emit calibrationChanged();
+
+    _updateRepeatTimerRunning();
 }
 
 void AxisActionRouter::clearCalibration()
@@ -950,6 +1080,7 @@ void AxisActionRouter::removeMapping(int axis)
             _rebuildSummaries();
             emit mappingsChanged();
             _saveToSettings();
+            _updateRepeatTimerRunning();
             return;
         }
     }
@@ -962,6 +1093,7 @@ void AxisActionRouter::clearAllMappings()
     _cardOrderAxes.clear();
     emit mappingsChanged();
     _saveToSettings();
+    _updateRepeatTimerRunning();
 }
 
 // -------------------- action dispatch --------------------
@@ -996,35 +1128,24 @@ int AxisActionRouter::activePosForAxis(int axis) const
 
 QObject* AxisActionRouter::_assignableActionObjectAt(int idx) const
 {
-    if (!_js) return nullptr;
-    if (idx < 0) return nullptr;
+    if (!_js || idx < 0) return nullptr;
 
     const QVariant v = _js->property("assignableActions");
     if (v.isValid()) {
-        QObject* modelObj = v.value<QObject*>();
-        if (modelObj) {
-            QObject* actObj = nullptr;
-
+        if (QObject* modelObj = v.value<QObject*>()) {
+            QVariant row;
             if (QMetaObject::invokeMethod(modelObj, "get",
-                                          Q_RETURN_ARG(QObject*, actObj),
+                                          Q_RETURN_ARG(QVariant, row),
                                           Q_ARG(int, idx))) {
-                return actObj;
-            }
+                if (QObject* o = row.value<QObject*>()) return o;
 
-            actObj = nullptr;
-            if (QMetaObject::invokeMethod(modelObj, "at",
-                                          Q_RETURN_ARG(QObject*, actObj),
-                                          Q_ARG(int, idx))) {
-                return actObj;
-            }
-
-            const int count = modelObj->property("count").toInt();
-            if (count > 0 && idx < count) {
-                actObj = nullptr;
-                if (QMetaObject::invokeMethod(modelObj, "get",
-                                              Q_RETURN_ARG(QObject*, actObj),
-                                              Q_ARG(int, idx))) {
-                    return actObj;
+                const QVariantMap m = row.toMap();
+                if (!m.isEmpty()) {
+                    static const char* kKeys[] = { "action", "qAction", "qtAction", "object", "obj" };
+                    for (const char* k : kKeys) {
+                        const QVariant mv = m.value(QString::fromLatin1(k));
+                        if (QObject* o2 = mv.value<QObject*>()) return o2;
+                    }
                 }
             }
         }
@@ -1045,31 +1166,35 @@ bool AxisActionRouter::_tryTriggerViaJoystickActions(const QString& actionTitle)
     const QString want = actionTitle.trimmed();
     if (want.isEmpty()) return false;
 
-    const QStringList titles = _js->property("assignableActionTitles").toStringList();
-    if (titles.isEmpty()) return false;
+    const QStringList titles = _variantToStringList(_js->property("assignableActionTitles"));
+    if (titles.isEmpty()) {
+        return _tryTriggerViaAppActions(want);
+    }
 
     int idx = -1;
     for (int i = 0; i < titles.size(); ++i) {
         if (titles[i].compare(want, Qt::CaseInsensitive) == 0) { idx = i; break; }
     }
-    if (idx < 0) return false;
-
-    QObject* actObj = _assignableActionObjectAt(idx);
-    if (!actObj) return false;
-
-    if (QAction* qa = _extractAnyQAction(actObj)) {
-        QMetaObject::invokeMethod(qa, "trigger", Qt::QueuedConnection);
-        return true;
+    if (idx < 0) {
+        return _tryTriggerViaAppActions(want);
     }
 
-    static const char* kTry[] = { "trigger", "execute", "invoke", "activate" };
-    for (const char* m : kTry) {
-        if (QMetaObject::invokeMethod(actObj, m, Qt::QueuedConnection)) {
+    QObject* actObj = _assignableActionObjectAt(idx);
+
+    if (actObj) {
+        if (QAction* qa = _extractAnyQAction(actObj)) {
+            QMetaObject::invokeMethod(qa, "trigger", Qt::QueuedConnection);
             return true;
+        }
+
+        static const char* kTry[] = { "trigger", "execute", "invoke", "activate" };
+        for (const char* m : kTry) {
+            if (QMetaObject::invokeMethod(actObj, m, Qt::QueuedConnection)) return true;
         }
     }
 
-    return false;
+            // Fallback: trigger real QAction in app (same path as QGC behavior)
+    return _tryTriggerViaAppActions(want);
 }
 
 void AxisActionRouter::_triggerAction(const QString& label)
@@ -1131,6 +1256,13 @@ QString AxisActionRouter::_fileUrlToLocalPath(const QUrl& url)
     return QString();
 }
 
+QUrl AxisActionRouter::actionConfigDirUrl() const
+{
+    const QString dir = _actionConfigDirPath();
+    // FileDialog expects a folder url; ensure trailing slash via QDir
+    return QUrl::fromLocalFile(QDir(dir).absolutePath() + QLatin1Char('/'));
+}
+
 QString AxisActionRouter::exportProfileJson() const
 {
     QJsonObject root;
@@ -1168,6 +1300,11 @@ QString AxisActionRouter::exportProfileJson() const
         for (const QString& a : m.actions) actions.append(_normalizeStored(a));
         o["actions"] = actions;
 
+                // NEW: repeat
+        QJsonArray rep;
+        for (bool r : m.repeats) rep.append(r);
+        o["repeat"] = rep;
+
         maps.append(o);
     }
     root["maps"] = maps;
@@ -1186,10 +1323,8 @@ QString AxisActionRouter::importProfileJson(const QString& jsonText)
     }
 
     const QJsonObject root = doc.object();
-
     const QJsonObject ui = root.value("ui").toObject();
 
-            // axis names
     const QJsonObject axisNames = ui.value("axisNames").toObject();
     QHash<int, QString> nextNames;
     for (auto it = axisNames.begin(); it != axisNames.end(); ++it) {
@@ -1200,7 +1335,6 @@ QString AxisActionRouter::importProfileJson(const QString& jsonText)
         if (!name.isEmpty()) nextNames[a] = name;
     }
 
-            // card order
     QVector<int> nextOrder;
     const QJsonArray order = ui.value("cardOrder").toArray();
     for (const QJsonValue& v : order) {
@@ -1209,9 +1343,8 @@ QString AxisActionRouter::importProfileJson(const QString& jsonText)
         if (!nextOrder.contains(a)) nextOrder.push_back(a);
     }
 
-            // maps
     QVector<StoredMapping> nextStored;
-    const QJsonArray maps  = root.value("maps").toArray();
+    const QJsonArray maps = root.value("maps").toArray();
     for (const QJsonValue& v : maps) {
         if (!v.isObject()) continue;
         const QJsonObject o = v.toObject();
@@ -1223,14 +1356,22 @@ QString AxisActionRouter::importProfileJson(const QString& jsonText)
         for (const QJsonValue& x : o.value("thresholds").toArray()) m.thresholds.append(float(x.toDouble()));
         for (const QJsonValue& x : o.value("actions").toArray())    m.actions.append(_normalizeStored(x.toString()));
 
+                // NEW: repeat
+        for (const QJsonValue& x : o.value("repeat").toArray())     m.repeats.append(x.toBool(false));
+
         const int positions = _positionsCount(m.centers, m.thresholds);
+
         while (m.actions.size() < positions) m.actions << "No Action";
-        if (m.actions.size() > positions) m.actions = m.actions.mid(0, positions);
+        if (m.actions.size() > positions)    m.actions = m.actions.mid(0, positions);
+
+        while (m.repeats.size() < positions) m.repeats.push_back(false);
+        if (m.repeats.size() > positions)    m.repeats = m.repeats.mid(0, positions);
 
         m.stableIndex = -999;
         m.pendingIndex = -999;
         m.pendingSinceMs = 0;
         m.lastFireMs = 0;
+        m.lastRepeatMs = 0;
 
         if (m.axis < 0 || m.centers.isEmpty()) continue;
 
@@ -1254,13 +1395,27 @@ QString AxisActionRouter::importProfileJson(const QString& jsonText)
     _applyMappingToUiForAxis(_selectedAxis);
     emitActivePositionSnapshot();
 
+    _updateRepeatTimerRunning();
     return QString();
 }
 
 QString AxisActionRouter::exportProfileToFile(const QUrl& fileUrl) const
 {
-    const QString path = _fileUrlToLocalPath(fileUrl);
-    if (path.isEmpty()) return QStringLiteral("Invalid file path");
+    const QString chosenPath = _fileUrlToLocalPath(fileUrl);
+    if (chosenPath.isEmpty()) return QStringLiteral("Invalid file path");
+
+    // Force saving under Documents/<AppName>/ActionConfig/
+    const QFileInfo fi(chosenPath);
+    QString fileName = fi.fileName();
+    if (fileName.isEmpty()) {
+        fileName = QStringLiteral("ActionProfile.json");
+    }
+    if (!fileName.endsWith(".json", Qt::CaseInsensitive)) {
+        fileName += QStringLiteral(".json");
+    }
+
+    const QString dir = _actionConfigDirPath();
+    const QString path = QDir(dir).filePath(fileName);
 
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -1287,4 +1442,149 @@ QString AxisActionRouter::importProfileFromFile(const QUrl& fileUrl)
     f.close();
 
     return importProfileJson(QString::fromUtf8(data));
+}
+
+bool AxisActionRouter::repeatForAxis(int axis, int posIndex) const
+{
+    for (const auto& m : _stored) {
+        if (m.axis == axis) {
+            if (posIndex < 0 || posIndex >= m.repeats.size()) return false;
+            return m.repeats[posIndex];
+        }
+    }
+    return false;
+}
+
+void AxisActionRouter::setRepeatForAxis(int axis, int posIndex, bool enabled)
+{
+    if (posIndex < 0) return;
+
+    StoredMapping* m = _findMapping(axis);
+    if (!m) return;
+
+    const int positions = _positionsCount(m->centers, m->thresholds);
+
+    while (m->repeats.size() < positions) m->repeats.push_back(false);
+    if (m->repeats.size() > positions)    m->repeats = m->repeats.mid(0, positions);
+
+    if (posIndex >= m->repeats.size()) return;
+    if (m->repeats[posIndex] == enabled) return;
+
+    m->repeats[posIndex] = enabled;
+
+    _saveToSettings();
+    emit mappingsChanged();
+
+    _updateRepeatTimerRunning();
+}
+
+bool AxisActionRouter::_isVehicleFlightModeTitle(const QString& modeTitle) const
+{
+    Vehicle* veh = _vehicle.data();
+    if (!veh) return false;
+    const QString mode = modeTitle.trimmed();
+    if (mode.isEmpty()) return false;
+    return veh->flightModes().contains(mode);
+}
+
+bool AxisActionRouter::_actionTitleCanRepeat(const QString& actionTitle) const
+{
+    if (!_js) return false;
+
+    const QString a = actionTitle.trimmed();
+    if (a.isEmpty() || _isNoAction(a)) return false;
+
+            // Never repeat these safety-critical one-shots
+    if (a.compare("Arm", Qt::CaseInsensitive) == 0)            return false;
+    if (a.compare("Disarm", Qt::CaseInsensitive) == 0)         return false;
+    if (a.compare("Emergency Stop", Qt::CaseInsensitive) == 0) return false;
+    if (a.compare("EmergencyStop", Qt::CaseInsensitive) == 0)  return false;
+
+    const QStringList titles = _variantToStringList(_js->property("assignableActionTitles"));
+    if (titles.isEmpty()) {
+        // Titles missing in some builds -> still allow repeat for non-blocked actions
+        return true;
+    }
+
+    int idx = -1;
+    for (int i = 0; i < titles.size(); ++i) {
+        if (titles[i].compare(a, Qt::CaseInsensitive) == 0) { idx = i; break; }
+    }
+    if (idx < 0) {
+        // If we can still trigger via app actions, don't block repeat
+        return true;
+    }
+
+    QObject* actObj = _assignableActionObjectAt(idx);
+    if (!actObj) return true;
+
+    const QVariant v = actObj->property("canRepeat");
+    if (!v.isValid()) return true;
+    return v.toBool();
+}
+
+void AxisActionRouter::_updateRepeatTimerRunning()
+{
+    bool anyRepeatEnabled = false;
+
+    if (_js) {
+        for (const auto& m : _stored) {
+            for (bool r : m.repeats) {
+                if (r) { anyRepeatEnabled = true; break; }
+            }
+            if (anyRepeatEnabled) break;
+        }
+    }
+
+    if (!anyRepeatEnabled) {
+        if (_repeatTimer.isActive()) _repeatTimer.stop();
+        return;
+    }
+
+    if (!_repeatTimer.isActive()) {
+        _repeatTimer.start();
+    }
+}
+
+void AxisActionRouter::_onRepeatTick()
+{
+    if (!_js) {
+        _updateRepeatTimerRunning();
+        return;
+    }
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+
+    for (auto& m : _stored) {
+        const int pos = (m.stableIndex == -999) ? -1 : m.stableIndex;
+        if (pos < 0) continue;
+
+        const int positions = _positionsCount(m.centers, m.thresholds);
+
+                // Keep vectors aligned (defensive)
+        while (m.actions.size() < positions)  m.actions << "No Action";
+        if (m.actions.size() > positions)     m.actions = m.actions.mid(0, positions);
+
+        while (m.repeats.size() < positions)  m.repeats.push_back(false);
+        if (m.repeats.size() > positions)     m.repeats = m.repeats.mid(0, positions);
+
+        if (pos >= positions) continue;
+        if (!m.repeats[pos]) continue;
+
+        if ((now - m.lastRepeatMs) < _repeatIntervalMs) continue;
+
+        const QString action = _normalizeStored(m.actions[pos]);
+        if (_isNoAction(action)) continue;
+
+                // Do not repeat flight mode changes
+        if (_isVehicleFlightModeTitle(action)) continue;
+
+                // Only allow repeat for actions that claim canRepeat
+        if (!_actionTitleCanRepeat(action)) continue;
+
+        m.lastRepeatMs = now;
+        _triggerAction(action);
+    }
+
+    _updateRepeatTimerRunning();
 }

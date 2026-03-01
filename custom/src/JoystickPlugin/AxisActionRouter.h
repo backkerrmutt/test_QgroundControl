@@ -8,7 +8,9 @@
 #include <QtCore/QHash>
 #include <QtCore/QPointer>
 #include <QtCore/QUrl>
+#include <QtCore/QTimer>
 
+class QAction;
 class Vehicle;
 class Joystick;
 
@@ -61,6 +63,9 @@ class AxisActionRouter : public QObject
     Q_INVOKABLE QString exportProfileToFile(const QUrl& fileUrl) const;
     Q_INVOKABLE QString importProfileFromFile(const QUrl& fileUrl);
 
+    // Directory under Documents/<AppName>/ActionConfig (auto-created)
+    Q_INVOKABLE QUrl actionConfigDirUrl() const;
+
     QStringList axisList() const { return _axisList; }
 
     int  selectedAxis() const { return _selectedAxis; }
@@ -86,12 +91,17 @@ class AxisActionRouter : public QObject
 
     QStringList mappingSummaries() const { return _mappingSummaries; }
 
+    mutable QHash<QString, QPointer<QAction>> _appActionCache;
+
     Q_INVOKABLE void startCalibration();
     Q_INVOKABLE void stopCalibration();
     Q_INVOKABLE void clearCalibration();
 
     Q_INVOKABLE void removeMapping(int axis);
     Q_INVOKABLE void clearAllMappings();
+
+    Q_INVOKABLE bool repeatForAxis(int axis, int posIndex) const;
+    Q_INVOKABLE void setRepeatForAxis(int axis, int posIndex, bool enabled);
 
    signals:
     void axisListChanged();
@@ -111,6 +121,7 @@ class AxisActionRouter : public QObject
 
    private slots:
     void _onAxisValueChanged(int axis, int value);
+    void _onRepeatTick();
 
    private:
     struct StoredMapping {
@@ -123,6 +134,10 @@ class AxisActionRouter : public QObject
         int    pendingIndex   = -999;
         qint64 pendingSinceMs = 0;
         qint64 lastFireMs     = 0;
+        QVector<bool> repeats;
+        qint64 lastRepeatMs = 0;
+
+        // NOTE: keep this struct closed properly (missing brace will break moc/compile)
     };
 
     void _attach(Joystick* js);
@@ -196,4 +211,14 @@ class AxisActionRouter : public QObject
 
     QHash<int, QString> _axisNames;
     QVector<int>        _cardOrderAxes;
+    QTimer _repeatTimer;
+    int    _repeatIntervalMs = 150;
+
+   private:
+    void _updateRepeatTimerRunning();
+    bool _actionTitleCanRepeat(const QString& actionTitle) const;
+    bool _isVehicleFlightModeTitle(const QString& modeTitle) const;
+
+    bool     _tryTriggerViaAppActions(const QString& actionTitle) const;
+    QAction* _findAppQActionByTitle(const QString& actionTitle) const;
 };

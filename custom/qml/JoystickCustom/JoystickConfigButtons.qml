@@ -110,6 +110,45 @@ ColumnLayout {
         return out
     }
 
+    function _normTitle(s) {
+        return String(s || "").replace(/&/g, "").trim().toLowerCase()
+    }
+
+    // Return the real assignable action object for combo indices that map to built-in QGC actions.
+    // Note: Flight modes appended by _actionModelWithFlightModes() will be out-of-range and return null.
+    function _assignableActionAtComboIndex(ci) {
+        if (!activeJoystick || !activeJoystick.assignableActions) return null
+        var n = activeJoystick.assignableActions.count
+        if (ci < 0 || ci >= n) return null
+        return activeJoystick.assignableActions.get(ci)
+    }
+
+    function _isFlightModeTitle(title) {
+        if (!axisRouter || !axisRouter.allFlightModes) return false
+        var modes = axisRouter.allFlightModes()
+        if (!modes) return false
+        var t = _normTitle(title)
+        for (var i = 0; i < modes.length; i++) {
+            if (_normTitle(modes[i]) === t) return true
+        }
+        return false
+    }
+
+    // Keep this for legacy checks by title (e.g. when you only have a title string).
+    // For UI enable/disable, prefer _assignableActionAtComboIndex(...) which matches QGC original behavior.
+    function _actionCanRepeatByTitle(title) {
+        if (!activeJoystick || !activeJoystick.assignableActions) return false
+        if (_isFlightModeTitle(title)) return false
+
+        var want = _normTitle(title)
+        for (var i=0; i<activeJoystick.assignableActions.count; i++) {
+            var a = activeJoystick.assignableActions.get(i)
+            var at = _normTitle(a && (a.title !== undefined ? a.title : (a.text !== undefined ? a.text : "")))
+            if (at === want) return !!a.canRepeat
+        }
+        return false
+    }
+
     Component.onCompleted: Qt.callLater(_syncAxisRouter)
 
     onActiveJoystickChanged: {
@@ -173,7 +212,6 @@ ColumnLayout {
     property string _lastProfileError: ""
 
     function _pickedUrl(dlg) {
-        // QtQuick.Dialogs FileDialog may expose selectedFile or currentFile depending on Qt version
         if (!dlg) return ""
         if (dlg.selectedFile !== undefined && dlg.selectedFile) return dlg.selectedFile
         if (dlg.currentFile  !== undefined && dlg.currentFile)  return dlg.currentFile
@@ -185,6 +223,7 @@ ColumnLayout {
         title: qsTr("Export Profile")
         fileMode: FileDialog.SaveFile
         nameFilters: [ "JSON (*.json)" ]
+        currentFolder: (axisRouter && axisRouter.actionConfigDirUrl) ? axisRouter.actionConfigDirUrl() : ""
         onAccepted: {
             if (!axisRouter || !axisRouter.exportProfileToFile) return
             var url = root._pickedUrl(exportProfileDialog)
@@ -201,6 +240,7 @@ ColumnLayout {
         title: qsTr("Import Profile")
         fileMode: FileDialog.OpenFile
         nameFilters: [ "JSON (*.json)" ]
+        currentFolder: (axisRouter && axisRouter.actionConfigDirUrl) ? axisRouter.actionConfigDirUrl() : ""
         onAccepted: {
             if (!axisRouter || !axisRouter.importProfileFromFile) return
             var url = root._pickedUrl(importProfileDialog)
@@ -222,8 +262,6 @@ ColumnLayout {
         buttons: MessageDialog.Ok
     }
 
-    // Pending remove state (shared dialog)
-
     Popup {
         id: removeConfirmDialog
         modal: true
@@ -240,29 +278,17 @@ ColumnLayout {
             open()
         }
 
-        // =========================================================
-        // 🔧 TUNING ZONE (จุดกำหนดเลข ปรับได้ตามที่ต้องการ)
-        // =========================================================
-
-        // 1) Padding รอบๆเนื้อหาใน dialog
         readonly property real _pad:   ScreenTools.defaultFontPixelWidth * 1.2
-
-        // 2) ความกว้าง: want = อยากได้, avail = มีให้ใช้จริงตามจอ
         readonly property real _availW: Math.max(360, root.width  - (_pad * 2))
-        readonly property real _wantW:  ScreenTools.defaultFontPixelWidth * 80   // ✅ ปรับเลขนี้ให้กว้างขึ้น/แคบลง
+        readonly property real _wantW:  ScreenTools.defaultFontPixelWidth * 80
         width: Math.min(_availW, _wantW)
 
-        // 3) ความสูง: min = ความสูงขั้นต่ำ, avail = สูงสุดที่ไม่เกินจอ
         readonly property real _availH: Math.max(240, root.height - (_pad * 2))
-        readonly property real _minH:   ScreenTools.defaultFontPixelHeight * 16  // ✅ ปรับเลขนี้ให้ dialog “สูงขึ้น”
+        readonly property real _minH:   ScreenTools.defaultFontPixelHeight * 16
         height: Math.min(_availH, Math.max(_minH, contentItem.implicitHeight))
 
-        // 4) ตำแหน่ง: ยึดด้านบน แล้วให้ขยาย “ลงล่าง”
         x: Math.max(_pad, Math.min(root.width  - width  - _pad, Math.round((root.width  - width)  / 2)))
         y: Math.max(_pad, Math.min(root.height - height - _pad, Math.round((root.height - height) / 2)))
-        // y: Math.max(_pad, Math.min(root.height - height - _pad, Math.round((root.height - height) / 2 + root.height * 0.06)))
-
-        // =========================================================
 
         Overlay.modal: Rectangle { color: "#000000"; opacity: 0.55 }
 
@@ -274,7 +300,6 @@ ColumnLayout {
         }
 
         contentItem: Item {
-            // ให้ content คิดความสูงเอง แล้ว Popup จะเอาไปเทียบกับ _minH/_availH
             implicitHeight: bodyCol.implicitHeight
 
             ColumnLayout {
@@ -283,7 +308,6 @@ ColumnLayout {
                 anchors.margins: removeConfirmDialog._pad
                 spacing: ScreenTools.defaultFontPixelHeight * 0.7
 
-                // ---------- Header ----------
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: ScreenTools.defaultFontPixelWidth
@@ -306,19 +330,17 @@ ColumnLayout {
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(1,1,1,0.10) }
 
-                // ---------- Main question (ให้จบในบรรทัดเดียว) ----------
                 QGCLabel {
                     Layout.fillWidth: true
                     text: qsTr("Are you sure you want to remove this mapping?")
                     wrapMode: Text.NoWrap
                     elide: Text.ElideRight
                     maximumLineCount: 1
-                    font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.25   // ✅ ถ้ายังไม่พอ ให้ลดลงอีกนิด
+                    font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.25
                     font.bold: true
                     color: qgcPal.text
                 }
 
-                // ---------- Axis title (ใหญ่ ชัด) ----------
                 Rectangle {
                     Layout.fillWidth: true
                     radius: 10
@@ -341,11 +363,8 @@ ColumnLayout {
                     }
                 }
 
-                // ✅ ตัวนี้คือ “ตัวทำให้ dialog สูงขึ้นแล้วเนื้อหาด้านล่างถูกดันลง”
-                // ถ้า dialog สูงกว่าที่ content ต้องใช้ พื้นที่ว่างจะอยู่ตรงนี้ และปุ่มจะไปเกาะล่าง
                 Item { Layout.fillHeight: true; height: 1 }
 
-                // ---------- Footer (ปุ่มไม่ตกกล่อง) ----------
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: ScreenTools.defaultFontPixelWidth
@@ -409,7 +428,7 @@ ColumnLayout {
             spacing: ScreenTools.defaultFontPixelHeight
 
             // =========================
-            // Standard Button Assignment (UNCHANGED)
+            // Standard Button Assignment
             // =========================
             ColumnLayout {
                 id: flowColumn
@@ -458,7 +477,6 @@ ColumnLayout {
                             QGCComboBox {
                                 id: buttonActionCombo
                                 width: ScreenTools.defaultFontPixelWidth * 26
-                                // model: activeJoystick ? activeJoystick.assignableActionTitles : []
                                 model: _actionModelWithFlightModes()
                                 sizeToContents: true
 
@@ -491,7 +509,7 @@ ColumnLayout {
             }
 
             // =========================
-            // Firmware JS Buttons (UNCHANGED)
+            // Firmware JS Buttons
             // =========================
             Column {
                 id: buttonCol
@@ -597,7 +615,7 @@ ColumnLayout {
                 visible: _joyOk && !!axisRouter
                 columns: (vScroll.width < (ScreenTools.defaultFontPixelWidth * 115)) ? 1 : 2
 
-            // ---------- Left: Calibrate Axis ----------
+                // ---------- Left: Calibrate Axis ----------
                 QGCGroupBox {
                     id: calibrateBox
                     title: qsTr("Calibrate Axis")
@@ -685,7 +703,6 @@ ColumnLayout {
                                          : Math.max(ScreenTools.defaultFontPixelWidth * 44, vScroll.width * 0.33)
 
                     // Modal overlay while calibrating
-                    // Modal overlay while calibrating
                     Item {
                         id: calibLockLayer
                         parent: root
@@ -733,7 +750,6 @@ ColumnLayout {
                                     width: modalFlick.width
                                     spacing: ScreenTools.defaultFontPixelHeight * 0.7
 
-                                    // ----- Header -----
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: ScreenTools.defaultFontPixelWidth
@@ -742,7 +758,6 @@ ColumnLayout {
                                             Layout.fillWidth: true
                                             font.bold: true
 
-                                            // ✅ FIX: selectedAxis is an INDEX, axis number is axisList[selectedAxis]
                                             readonly property int axNo: (axisRouter && axisRouter.axisList
                                                                         && axisRouter.selectedAxis >= 0
                                                                         && axisRouter.selectedAxis < axisRouter.axisList.length)
@@ -760,84 +775,11 @@ ColumnLayout {
                                         }
                                     }
 
-                                    // ----- Axis picker row -----
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: ScreenTools.defaultFontPixelWidth
 
                                         QGCLabel { text: qsTr("Axis:") }
-
-                                        // ✅ Make dropdown look consistent (same style as main page)
-                                        // Rectangle {
-                                        //     Layout.fillWidth: true
-                                        //     height: modalAxisPick.implicitHeight + 2
-                                        //     radius: 6
-                                        //     border.width: 1
-                                        //     border.color: Qt.rgba(1,1,1,0.12)
-                                        //     color: Qt.rgba(1,1,1,0.06)
-
-                                        //     QGCComboBox {
-                                        //         id: modalAxisPick
-                                        //         anchors.fill: parent
-                                        //         anchors.margins: 1
-
-                                        //         model: axisRouter ? axisRouter.axisList : []
-                                        //         currentIndex: axisRouter ? axisRouter.selectedAxis : 0
-
-                                        //         background: Rectangle { color: "transparent"; radius: 6 }
-
-                                        //         // ✅ Show selected item as CHx (#x)
-                                        //         contentItem: QGCLabel {
-                                        //             readonly property int ax: Number(modalAxisPick.currentText) // currentText = modelData (axis number)
-                                        //             text: axisRouter ? (root._axisLabel(ax) + "  (#" + ax + ")")
-                                        //                              : modalAxisPick.currentText
-                                        //             color: qgcPal.text
-                                        //             verticalAlignment: Text.AlignVCenter
-                                        //             elide: Text.ElideRight
-                                        //             leftPadding: ScreenTools.defaultFontPixelWidth * 0.8
-                                        //             rightPadding: ScreenTools.defaultFontPixelWidth * 2.0
-                                        //         }
-
-                                        //         // ✅ Dropdown items as CHx (#x)
-                                        //         delegate: ItemDelegate {
-                                        //             width: modalAxisPick.width
-                                        //             height: ScreenTools.defaultFontPixelHeight * 2.2
-                                        //             readonly property int ax: Number(modelData)
-
-                                        //             background: Rectangle {
-                                        //                 radius: 6
-                                        //                 color: highlighted
-                                        //                        ? Qt.rgba(0.2, 0.85, 0.3, 0.18)
-                                        //                        : Qt.rgba(1,1,1,0.04)
-                                        //                 border.width: highlighted ? 1 : 0
-                                        //                 border.color: highlighted ? Qt.rgba(0.2, 0.85, 0.3, 0.20) : "transparent"
-                                        //             }
-
-                                        //             contentItem: QGCLabel {
-                                        //                 text: root._axisLabel(ax) + "  (#" + ax + ")"
-                                        //                 color: qgcPal.text
-                                        //                 verticalAlignment: Text.AlignVCenter
-                                        //                 elide: Text.ElideRight
-                                        //             }
-                                        //         }
-
-                                        //         onActivated: (i) => {
-                                        //             if (!axisRouter) return
-                                        //             axisRouter.selectedAxis = i
-                                        //             axisRouter.clearCalibration()
-                                        //             axisRouter.startCalibration()
-
-                                        //             calibrateBox._lastNorm = axisRouter.selectedAxisNorm
-                                        //             calibrateBox._lastChangeMs = Date.now()
-                                        //             calibrateBox._holdingSteady = false
-
-                                        //             calibrateBox._moveLastNorm = axisRouter.selectedAxisNorm
-                                        //             calibrateBox._moveLastMs = Date.now()
-                                        //             calibrateBox._moveSeen = false
-                                        //             calibrateBox._noMoveWarn = false
-                                        //         }
-                                        //     }
-                                        // }
 
                                         Rectangle {
                                             id: axisPickFrame
@@ -845,10 +787,8 @@ ColumnLayout {
                                             height: modalAxisPick.implicitHeight + 2
                                             radius: 6
 
-                                            // Current axis number from model text
                                             readonly property int _curAx: Number(modalAxisPick.currentText)
 
-                                            // Saved = calibrated already
                                             readonly property bool _curSaved: {
                                                 if (!axisRouter) return false
                                                 axisRouter.mappingSummaries
@@ -869,7 +809,6 @@ ColumnLayout {
 
                                                 background: Rectangle { color: "transparent"; radius: 6 }
 
-                                                // Selected text: CHx (#x) and bold/green if saved
                                                 contentItem: QGCLabel {
                                                     readonly property int ax: Number(modalAxisPick.currentText)
                                                     text: axisRouter ? (root._axisLabel(ax) + "  (#" + ax + ")") : modalAxisPick.currentText
@@ -881,7 +820,6 @@ ColumnLayout {
                                                     rightPadding: ScreenTools.defaultFontPixelWidth * 2.0
                                                 }
 
-                                                // Dropdown items: tint green for saved axes
                                                 delegate: ItemDelegate {
                                                     width: modalAxisPick.width
                                                     height: ScreenTools.defaultFontPixelHeight * 2.2
@@ -905,7 +843,6 @@ ColumnLayout {
                                                     contentItem: RowLayout {
                                                         spacing: ScreenTools.defaultFontPixelWidth * 0.6
 
-                                                        // Small dot indicator
                                                         Rectangle {
                                                             width: ScreenTools.defaultFontPixelWidth * 0.9
                                                             height: width
@@ -941,7 +878,6 @@ ColumnLayout {
                                                 }
                                             }
                                         }
-
                                     }
 
                                     QGCLabel {
@@ -1065,7 +1001,6 @@ ColumnLayout {
                         }
                     }
 
-                    // Main calibrate UI
                     ColumnLayout {
                         anchors.margins: ScreenTools.defaultFontPixelWidth
                         anchors.fill: parent
@@ -1289,8 +1224,7 @@ ColumnLayout {
                     }
                 }
 
-
-                // ---------- Right: Axis → Virtual Buttons (REORDERABLE) ----------
+                // ---------- Right: Axis → Virtual Buttons (reorderable) ----------
                 QGCGroupBox {
                     id: axisMapBox
                     title: qsTr("Axis → Virtual Buttons")
@@ -1479,22 +1413,16 @@ ColumnLayout {
 
                                 model: axisModel
 
-                                // ---- stable DPI-safe metrics (works same in Debug/Release) ----
                                 readonly property real fpw: (!ScreenTools.defaultFontPixelWidth || isNaN(ScreenTools.defaultFontPixelWidth) || ScreenTools.defaultFontPixelWidth <= 0)
                                                            ? 8 : ScreenTools.defaultFontPixelWidth
                                 readonly property real fph: (!ScreenTools.defaultFontPixelHeight || isNaN(ScreenTools.defaultFontPixelHeight) || ScreenTools.defaultFontPixelHeight <= 0)
                                                            ? 16 : ScreenTools.defaultFontPixelHeight
 
                                 readonly property real gap: fpw * 2
-
-                                // Keep padding small and predictable
                                 readonly property real sidePad: fpw * 2
                                 readonly property real usableW: Math.max(0, width - sidePad)
-
-                                // IMPORTANT: cap min card width so Release (high DPI) won't force 1 column
                                 readonly property real minCardPx: Math.min(520, Math.max(fpw * 22, 360))
 
-                                // 1..2 columns
                                 readonly property int cols: Math.max(1, Math.min(2,
                                     Math.floor((usableW + gap) / (minCardPx + gap))
                                 ))
@@ -1702,18 +1630,6 @@ ColumnLayout {
                                                         removeConfirmDialog.askRemove(cell.axisNum, titleText)
                                                     }
                                                 }
-
-                                                // QGCButton {
-                                                //     visible: axisMapBox.editMode
-                                                //     text: qsTr("Remove")
-                                                //     onClicked: {
-                                                //         removeConfirmDialog._pendingRemoveAxis = cell.axisNum
-                                                //         removeConfirmDialog._pendingRemoveTitle =
-                                                //             (axisRouter && axisRouter.axisLabel ? axisRouter.axisLabel(cell.axisNum) : ("Axis " + cell.axisNum))
-                                                //             + "  (#" + cell.axisNum + ")"
-                                                //         removeConfirmDialog.open()
-                                                //     }
-                                                // }
                                             }
 
                                             Repeater {
@@ -1744,7 +1660,6 @@ ColumnLayout {
                                                             id: actionCombo
                                                             anchors.fill: parent
                                                             anchors.margins: 1
-                                                            // model: activeJoystick ? activeJoystick.assignableActionTitles : []
                                                             model: _actionModelWithFlightModes()
 
                                                             currentIndex: {
@@ -1762,8 +1677,37 @@ ColumnLayout {
                                                                 return (i >= 0) ? i : 0
                                                             }
 
-                                                            onActivated: (i) => axisRouter.setActionForAxis(cell.axisNum, index, textAt(i))
+                                                            onActivated: (i) => {
+                                                                var t = textAt(i)
+                                                                axisRouter.setActionForAxis(cell.axisNum, index, t)
+
+                                                                // If the selected item is not a repeatable built-in action (or is a flight mode), force repeat off.
+                                                                var act = root._assignableActionAtComboIndex(i)
+                                                                if (!act || !act.canRepeat) {
+                                                                    axisRouter.setRepeatForAxis(cell.axisNum, index, false)
+                                                                }
+                                                            }
                                                             background: Rectangle { color: "transparent"; radius: 6 }
+                                                        }
+                                                    }
+
+                                                    QGCCheckBox {
+                                                        text: qsTr("Repeat")
+                                                        Layout.alignment: Qt.AlignVCenter
+
+                                                        // Match QGC original behavior: enable based on the real action object (not string match).
+                                                        readonly property var _actObj: root._assignableActionAtComboIndex(actionCombo.currentIndex)
+                                                        enabled: !!_actObj && !!_actObj.canRepeat
+
+                                                        checked: {
+                                                            if (!axisRouter) return false
+                                                            axisRouter.mappingSummaries
+                                                            return axisRouter.repeatForAxis(cell.axisNum, index)
+                                                        }
+
+                                                        onClicked: {
+                                                            if (!axisRouter || !enabled) return
+                                                            axisRouter.setRepeatForAxis(cell.axisNum, index, checked)
                                                         }
                                                     }
                                                 }
@@ -1775,8 +1719,6 @@ ColumnLayout {
                         }
                     }
                 }
-
-
             }
         }
     }

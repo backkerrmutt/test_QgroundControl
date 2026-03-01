@@ -8,45 +8,34 @@
 
 #include <QtCore/qapplicationstatic.h>
 #include <QtQml/QQmlApplicationEngine>
-
 #include <QtCore/QSet>
-#include "MultiVehicleManager.h"
-#include "Vehicle.h"
 #include <QtGui/QAction>
 
-// =====================================================================
-// [Joystick Module] QML type registration requires qqml.h
-// and we include our custom controller/router headers here (not in .h)
-// =====================================================================
-#include <QtQml/qqml.h>
-#include "CustomJoystickConfigController.h"
-#include "AxisActionRouter.h"
+#include "MultiVehicleManager.h"
+#include "Vehicle.h"
+
+// Include our custom handler instead of the individual joystick controllers
+#include "CustomJoystickHandler.h"
 
 QGC_LOGGING_CATEGORY(CustomLog, "gcs.custom.customplugin")
 
-// [custom-example pattern] Singleton instance (used by CustomPlugin::instance()).
+// Singleton instance
 Q_APPLICATION_STATIC(CustomPlugin, _customPluginInstance);
 
-
 //-----------------------------------------------------------------------------
-// CustomFlyViewOptions (unchanged)
+// CustomFlyViewOptions
+//-----------------------------------------------------------------------------
 CustomFlyViewOptions::CustomFlyViewOptions(CustomOptions* options, QObject* parent)
     : QGCFlyViewOptions(options, parent)
 {
 }
 
-bool CustomFlyViewOptions::showMultiVehicleList(void) const
-{
-    return false;
-}
-
-bool CustomFlyViewOptions::showInstrumentPanel(void) const
-{
-    return false;
-}
+bool CustomFlyViewOptions::showMultiVehicleList(void) const { return false; }
+bool CustomFlyViewOptions::showInstrumentPanel(void) const  { return false; }
 
 //-----------------------------------------------------------------------------
-// CustomOptions (unchanged)
+// CustomOptions
+//-----------------------------------------------------------------------------
 CustomOptions::CustomOptions(CustomPlugin *plugin, QObject *parent)
     : QGCOptions(parent)
       , _plugin(plugin)
@@ -55,127 +44,85 @@ CustomOptions::CustomOptions(CustomPlugin *plugin, QObject *parent)
     Q_CHECK_PTR(_plugin);
 }
 
-QGCFlyViewOptions* CustomOptions::flyViewOptions(void) const
-{
-    return _flyViewOptions;
-}
+QGCFlyViewOptions* CustomOptions::flyViewOptions(void) const     { return _flyViewOptions; }
+bool CustomOptions::showFirmwareUpgrade(void) const              { return _plugin->showAdvancedUI(); }
+bool CustomOptions::wifiReliableForCalibration(void) const       { return true; }
 
-bool CustomOptions::showFirmwareUpgrade(void) const
-{
-    return _plugin->showAdvancedUI();
-}
+//-----------------------------------------------------------------------------
+// CustomPlugin Implementation
+//-----------------------------------------------------------------------------
 
-bool CustomOptions::wifiReliableForCalibration(void) const
-{
-    return true;
-}
-
-
-// =====================================================================
-// [Joystick Module] Q_PROPERTY getter implementation
-//
-// QML reads:
-//   QGroundControl.corePlugin.axisActionRouter
-//
-// We return as QObject* so QML can call Q_INVOKABLE methods on it.
-// =====================================================================
 QObject* CustomPlugin::axisActionRouter() const
 {
-    return static_cast<QObject*>(_axisActionRouter);
+    // Delegate the request to our handler
+    return _joyHandler ? _joyHandler->axisActionRouter() : nullptr;
 }
 
 //-----------------------------------------------------------------------------
-// CustomPlugin ctor
+// CustomPlugin Implementation
+//-----------------------------------------------------------------------------
+
+
 CustomPlugin::CustomPlugin(QObject *parent)
     : QGCCorePlugin(parent)
       , _options(new CustomOptions(this, this))
 {
-    // =================================================================
-    // [Joystick Module] Register QML types ONCE early
-    //
-    // This is required so QML can do:
-    //   CustomJoystickConfigController { ... }
-    // and so QML knows AxisActionRouter type metadata.
-    // =================================================================
-    CustomPlugin::registerQmlTypes();
 
-            // =================================================================
-            // [Joystick Module] Create the router instance (core logic)
-            //
-            // This object:
-            //  - receives joystick raw axis updates
-            //  - runs calibration + stable detection
-            //  - triggers actions/flight modes
-            //  - persists mappings via QSettings
-            //
-            // It is exposed to QML via Q_PROPERTY axisActionRouter.
-            // =================================================================
-    _axisActionRouter = new AxisActionRouter(this);
+    //-----------------------------------------------------------------------------
+    // CustomPlugin Implementation
+    //-----------------------------------------------------------------------------
+    //  register types
+    CustomJoystickHandler::registerQmlTypes();
 
-            // _showAdvancedUI = false;
+    // Initialize the joystick handler (child of this plugin for auto-cleanup)
+    _joyHandler = new CustomJoystickHandler(this);
+
+    //-----------------------------------------------------------------------------
+    // CustomPlugin Implementation
+    //-----------------------------------------------------------------------------
+
+
     _showAdvancedUI = true;
-
-            // [custom-example pattern] keep firmware upgrade visibility tied to Advanced UI.
     QObject::connect(this, &QGCCorePlugin::showAdvancedUIChanged,
                      this, &CustomPlugin::_advancedChanged);
-}
-
-// =====================================================================
-// [Joystick Module] QML registration function
-//
-// Make sure the import namespace/version matches what QML uses:
-//   import QGroundControl.Controllers 1.0
-// =====================================================================
-void CustomPlugin::registerQmlTypes()
-{
-    // Prevent duplicate registration (safe when plugin reloads in some setups)
-    static bool _registered = false;
-    if (_registered) {
-        return;
-    }
-    _registered = true;
-
-            // (Optional but recommended) register base QGC types first
-    QGCCorePlugin::registerQmlTypes();
-
-            // ---------------------------------------------------------------
-            // [Joystick Module] 1) Expose the custom controller to QML
-            //
-            // QML usage:
-            //   CustomJoystickConfigController { id: controller }
-            //
-            // This controller grabs the plugin instance via QGCCorePlugin::instance()
-            // and returns axisActionRouter to QML.
-            // ---------------------------------------------------------------
-    qmlRegisterType<CustomJoystickConfigController>(
-        "QGroundControl.Controllers", 1, 0, "CustomJoystickConfigController");
-
-            // ---------------------------------------------------------------
-            // [Joystick Module] 2) Expose AxisActionRouter type info to QML
-            //
-            // Mark as "uncreatable" so QML can't instantiate it directly.
-            // Only the plugin owns a single router instance.
-            // ---------------------------------------------------------------
-    qmlRegisterUncreatableType<AxisActionRouter>(
-        "QGroundControl.Controllers", 1, 0, "AxisActionRouter",
-        "AxisActionRouter is exposed by CustomJoystickConfigController");
 }
 
 CustomPlugin::~CustomPlugin()
 {
 }
 
-QGCCorePlugin *CustomPlugin::instance()
+QGCCorePlugin* CustomPlugin::instance()
 {
     return _customPluginInstance();
 }
+
+//-----------------------------------------------------------------------------
+// CustomPlugin Implementation
+//-----------------------------------------------------------------------------
+
+void CustomPlugin::registerQmlTypes()
+{
+    static bool _registered = false;
+    if (_registered) return;
+    _registered = true;
+
+            // Register core QGC types
+    QGCCorePlugin::registerQmlTypes();
+
+            // Delegate QML registration for joystick components
+    CustomJoystickHandler::registerQmlTypes();
+}
+
+//-----------------------------------------------------------------------------
+// CustomPlugin Implementation
+//-----------------------------------------------------------------------------
+
 
 void CustomPlugin::_advancedChanged(bool changed)
 {
     emit _options->showFirmwareUpgradeChanged(changed);
 }
 
-//-----------------------------------------------------------------------------
 void CustomPlugin::_addSettingsEntry(const QString& title, const char* qmlFile, const char* iconFile)
 {
     Q_CHECK_PTR(qmlFile);
@@ -226,7 +173,6 @@ bool CustomPlugin::adjustSettingMetaData(const QString& settingsGroup, FactMetaD
     return parentResult;
 }
 
-// [Joystick Module] Not required for joystick. Safe to keep or remove.
 // This modifies QGC colors palette to match possible custom corporate branding
 void CustomPlugin::paletteOverride(const QString &colorName, QGCPalette::PaletteColorInfo_t& colorInfo)
 {
@@ -418,16 +364,12 @@ void CustomPlugin::paletteOverride(const QString &colorName, QGCPalette::Palette
     }
 }
 
+
 QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
 {
     QQmlApplicationEngine* qmlEngine = QGCCorePlugin::createQmlApplicationEngine(parent);
 
-            // =================================================================
-            // [Joystick Module] Not required unless your joystick UI imports
-            // extra QML under qrc:/Custom/Widgets (or similar).
-            //
-            // If you do not have Custom/Widgets resources, you can remove this.
-            // =================================================================
+            // Add custom QML import paths if necessary
     qmlEngine->addImportPath("qrc:/Custom/Widgets");
 
     return qmlEngine;

@@ -318,6 +318,8 @@ qt_add_executable(${CMAKE_PROJECT_NAME}
     WIN32
     MACOSX_BUNDLE
     ${QGC_RESOURCES}
+    custom/src/JoystickPlugin/CustomJoystickHandler.h
+    custom/src/JoystickPlugin/CustomJoystickHandler.cc
 )
 
 if(WIN32)

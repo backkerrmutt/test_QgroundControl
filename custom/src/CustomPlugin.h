@@ -11,14 +11,22 @@
 class FactMetaData;
 class QQmlApplicationEngine;
 
-// [Joystick Module] Forward declare is enough in header (keep compile time low).
-// The concrete type is included in CustomPlugin.cc where we create/register it.
-class AxisActionRouter;
+//-----------------------------------------------------------------------------
+// CustomPlugin Implementation
+//-----------------------------------------------------------------------------
+
+// Forward declaration for the Joystick Handler (Delegation Pattern)
+class CustomJoystickHandler;
+
+//-----------------------------------------------------------------------------
+// CustomPlugin Implementation
+//-----------------------------------------------------------------------------
 
 Q_DECLARE_LOGGING_CATEGORY(CustomLog)
 
 //-----------------------------------------------------------------------------
-
+// CustomFlyViewOptions
+//-----------------------------------------------------------------------------
 class CustomOptions;
 class CustomPlugin;
 
@@ -32,7 +40,8 @@ class CustomFlyViewOptions : public QGCFlyViewOptions
 };
 
 //-----------------------------------------------------------------------------
-
+// CustomOptions
+//-----------------------------------------------------------------------------
 class CustomOptions : public QGCOptions
 {
    public:
@@ -43,58 +52,42 @@ class CustomOptions : public QGCOptions
     QGCFlyViewOptions* flyViewOptions(void) const final;
 
    private:
-    CustomPlugin*         _plugin         = nullptr;
+    CustomPlugin* _plugin         = nullptr;
     CustomFlyViewOptions* _flyViewOptions = nullptr;
 };
 
 //-----------------------------------------------------------------------------
-
+// CustomPlugin (Main Core Plugin)
+//-----------------------------------------------------------------------------
 class CustomPlugin : public QGCCorePlugin
 {
     Q_OBJECT
 
-            // =====================================================================
-            // [Joystick Module] QML bridge entry point (MOST IMPORTANT)
-            //
-            // This exposes the AxisActionRouter instance to QML as:
-            //   QGroundControl.corePlugin.axisActionRouter
-            //
-            // Your JoystickConfig.qml / JoystickConfigButtons.qml bind to this.
-            // =====================================================================
+            // Expose the AxisActionRouter to QML via the delegate handler
     Q_PROPERTY(QObject* axisActionRouter READ axisActionRouter CONSTANT)
 
    public:
     explicit CustomPlugin(QObject* parent = nullptr);
     ~CustomPlugin() override;
 
-            // [custom-example pattern] Plugin singleton used by QGCCorePlugin::instance()
     static QGCCorePlugin* instance();
 
-            // =====================================================================
-            // [Joystick Module] QML type registration hook
-            //
-            // Registers:
-            //  - CustomJoystickConfigController (creatable from QML)
-            //  - AxisActionRouter (uncreatable, exposed by the plugin)
-            //
-            // QML side uses:
-            //   import QGroundControl.Controllers 1.0
-            // =====================================================================
+    //-----------------------------------------------------------------------------
+    // CustomPlugin Implementation
+    //-----------------------------------------------------------------------------
+
     static void registerQmlTypes();
 
-            // =====================================================================
-            // [Joystick Module] Router accessor for QML
-            //
-            // QML reads this property via the Q_PROPERTY above.
-            // Keep return type as QObject* for QML friendliness.
-            // =====================================================================
+            // Getter for the QML property
     QObject* axisActionRouter() const;
 
-            // [Joystick Module] Optional typed accessor for C++ (NOT exposed to QML)
-    AxisActionRouter* axisActionRouterTyped() const { return _axisActionRouter; }
+    //-----------------------------------------------------------------------------
+    // CustomPlugin Implementation
+    //-----------------------------------------------------------------------------
 
-            // ---- QGCCorePlugin overrides (same as custom-example) ----
-    QGCOptions*            options(void) final;
+
+            // ---- QGCCorePlugin Overrides ----
+    QGCOptions* options(void) final;
     QString                brandImageIndoor(void) const final;
     QString                brandImageOutdoor(void) const final;
     bool                   overrideSettingsGroupVisibility(const QString& name) final;
@@ -111,12 +104,15 @@ class CustomPlugin : public QGCCorePlugin
     CustomOptions* _options = nullptr;
     QVariantList   _customSettingsList;
 
-            // =====================================================================
-            // [Joystick Module] Owned router instance (lifetime = CustomPlugin lifetime)
-            //
-            // Created in CustomPlugin.cc constructor:
-            //   _axisActionRouter = new AxisActionRouter(this);
-            // Parent is 'this' so it will auto-delete with the plugin.
-            // =====================================================================
-    AxisActionRouter* _axisActionRouter = nullptr;
+    //-----------------------------------------------------------------------------
+    // CustomPlugin Implementation
+    //-----------------------------------------------------------------------------
+
+            // Delegate handler for joystick and axis routing operations
+    CustomJoystickHandler* _joyHandler = nullptr;
+
+    //-----------------------------------------------------------------------------
+    // CustomPlugin Implementation
+    //-----------------------------------------------------------------------------
+
 };

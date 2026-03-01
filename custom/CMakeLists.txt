@@ -90,6 +90,9 @@ list(APPEND CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickConfigController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickConfigController.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickHandler.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickHandler.h
+
 )
 
 # เพิ่ม Joystick directory
