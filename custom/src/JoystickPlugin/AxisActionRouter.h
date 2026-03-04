@@ -41,7 +41,7 @@ class AxisActionRouter : public QObject
 
     Q_PROPERTY(QStringList mappingSummaries READ mappingSummaries NOTIFY mappingsChanged)
 
-public:
+   public:
     explicit AxisActionRouter(QObject* parent = nullptr);
 
     Q_INVOKABLE void setJoystick(QObject* joystickObj);
@@ -61,14 +61,14 @@ public:
     Q_INVOKABLE QVariantList cardOrder() const;
     Q_INVOKABLE void setCardOrder(const QVariantList& order);
 
-    // Profile export/import
+            // Profile export/import
     Q_INVOKABLE QString exportProfileJson() const;
     Q_INVOKABLE QString importProfileJson(const QString& jsonText);
 
     Q_INVOKABLE QString exportProfileToFile(const QUrl& fileUrl) const;
     Q_INVOKABLE QString importProfileFromFile(const QUrl& fileUrl);
 
-    // Directory under Documents/<AppName>/ActionConfig (auto-created)
+            // Directory under Documents/<AppName>/ActionConfig (auto-created)
     Q_INVOKABLE QUrl actionConfigDirUrl() const;
 
     QStringList axisList() const { return _axisList; }
@@ -108,7 +108,16 @@ public:
     Q_INVOKABLE bool repeatForAxis(int axis, int posIndex) const;
     Q_INVOKABLE void setRepeatForAxis(int axis, int posIndex, bool enabled);
 
-signals:
+            // -----------------------------------------------------
+            // API สำหรับดึง/บันทึกค่า Servo ID และ PWM จาก QML
+            // -----------------------------------------------------
+    Q_INVOKABLE int servoIdForAxis(int axis, int posIndex) const;
+    Q_INVOKABLE void setServoIdForAxis(int axis, int posIndex, int id);
+
+    Q_INVOKABLE int servoPwmForAxis(int axis, int posIndex) const;
+    Q_INVOKABLE void setServoPwmForAxis(int axis, int posIndex, int pwm);
+
+   signals:
     void axisListChanged();
     void selectedAxisChanged();
     void selectedAxisValueChanged();
@@ -121,14 +130,18 @@ signals:
 
     void mappingsChanged();
 
+            // Signal เฉพาะสำหรับ servo params (ID/PWM) เปลี่ยน
+            // แยกออกมาเพื่อไม่ให้ QML recompute actionCombo.currentIndex
+    void servoParamsChanged(int axis, int posIndex);
+
     void requestTriggerQgcAction(const QString& actionTitle);
     void axisActivePosChanged(int axis, int pos);
 
-private slots:
+   private slots:
     void _onAxisValueChanged(int axis, int value);
     void _onRepeatTick();
 
-private:
+   private:
     struct StoredMapping {
         int axis = -1;
         QVector<float> centers;
@@ -141,6 +154,9 @@ private:
         qint64 lastFireMs     = 0;
         QVector<bool> repeats;
         qint64 lastRepeatMs = 0;
+
+        QVector<int> servoIds;
+        QVector<int> servoPwms;
     };
 
     void _attach(Joystick* js);
@@ -152,9 +168,11 @@ private:
     void _calibFeed(float v, qint64 nowMs);
     void _finalizeCalibrationFromSamples();
 
-    void _triggerAction(const QString& label);
+    void _triggerAction(const QString& label, int servoId = 0, int servoPwm = 0);
+
     void _arm(bool arm);
     void _emergencyStop();
+    void _setServo(int id, int pwm);
 
     StoredMapping* _findMapping(int axis);
     void _applyMappingToUiForAxis(int axis);
@@ -177,7 +195,7 @@ private:
 
     static QString _fileUrlToLocalPath(const QUrl& url);
 
-private:
+   private:
     QPointer<Vehicle> _vehicle;
     QPointer<Joystick> _js;
 
@@ -217,7 +235,7 @@ private:
     QTimer _repeatTimer;
     int    _repeatIntervalMs = 150;
 
-private:
+   private:
     void _updateRepeatTimerRunning();
     bool _actionTitleCanRepeat(const QString& actionTitle) const;
     bool _isVehicleFlightModeTitle(const QString& modeTitle) const;

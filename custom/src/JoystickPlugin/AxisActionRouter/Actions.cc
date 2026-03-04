@@ -172,7 +172,7 @@ bool AxisActionRouter::_trySetVehicleFlightMode(const QString& modeTitle)
     return true;
 }
 
-void AxisActionRouter::_triggerAction(const QString& label)
+void AxisActionRouter::_triggerAction(const QString& label, int servoId, int servoPwm)
 {
     const QString a = _normalizeStored(label);
     if (_isNoAction(a)) return;
@@ -181,6 +181,13 @@ void AxisActionRouter::_triggerAction(const QString& label)
     if (a.compare("Disarm", Qt::CaseInsensitive) == 0)         { _arm(false); return; }
     if (a.compare("Emergency Stop", Qt::CaseInsensitive) == 0) { _emergencyStop(); return; }
     if (a.compare("EmergencyStop",  Qt::CaseInsensitive) == 0) { _emergencyStop(); return; }
+
+            // ตรวจจับ Action พิเศษสำหรับ Servo/Airbag
+    if (a.compare("Servo Control", Qt::CaseInsensitive) == 0 ||
+        a.compare("Deploy Airbag", Qt::CaseInsensitive) == 0) {
+        _setServo(servoId, servoPwm);
+        return;
+    }
 
     if (_trySetVehicleFlightMode(a)) return;
     if (_tryTriggerViaJoystickActions(a)) return;
@@ -206,6 +213,22 @@ void AxisActionRouter::_emergencyStop()
     QMetaObject::invokeMethod(veh, [veh] {
         veh->emergencyStop();
     }, Qt::QueuedConnection);
+}
+
+// ฟังก์ชันสำหรับสั่งงาน Servo ผ่าน MAVLink Command (183 หรือ 256)
+void AxisActionRouter::_setServo(int id, int pwm)
+{
+    Vehicle* veh = _vehicle.data();
+    if (!veh) return;
+
+            // แก้บัค: Cast 183 เป็น enum MAV_CMD และค่าเป็น float ทั้งหมด
+    veh->sendMavCommand(
+        veh->defaultComponentId(),
+        static_cast<MAV_CMD>(183), // 183 = MAV_CMD_DO_SET_SERVO
+        true,                      // showError
+        static_cast<float>(id),    // param1: Servo ID
+        static_cast<float>(pwm),   // param2: PWM Value
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 }
 
 bool AxisActionRouter::_isVehicleFlightModeTitle(const QString& modeTitle) const

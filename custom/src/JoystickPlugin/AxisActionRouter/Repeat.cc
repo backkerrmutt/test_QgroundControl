@@ -129,7 +129,13 @@ void AxisActionRouter::_onRepeatTick()
         if (!_actionTitleCanRepeat(action)) continue;
 
         m.lastRepeatMs = now;
-        _triggerAction(action);
+
+        int sId = 9;
+        int sPwm = 1500;
+        if (pos < m.servoIds.size()) sId = m.servoIds[pos];
+        if (pos < m.servoPwms.size()) sPwm = m.servoPwms[pos];
+
+        _triggerAction(action, sId, sPwm);
     }
 
     _updateRepeatTimerRunning();

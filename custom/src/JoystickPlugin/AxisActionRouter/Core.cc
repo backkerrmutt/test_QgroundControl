@@ -42,11 +42,16 @@ void AxisActionRouter::setJoystick(QObject* joystickObj)
     Joystick* js = qobject_cast<Joystick*>(joystickObj);
     if (js == _js.data()) return;
 
+            // ① บันทึก settings ของ joystick เก่าก่อน detach
     _saveToSettings();
     _detach();
-    _attach(js);
 
-    _jsKey = _makeJoystickKey(_js);
+            // ② ตั้งค่า key ของ joystick ใหม่ก่อน attach เพื่อให้
+            //    destroyed-signal ที่อาจ clear _jsKey ไม่ทำให้ key หาย
+            //    และ _loadFromSettings() จะใช้ key ที่ถูกต้องทันที
+    _jsKey = _makeJoystickKey(js);
+
+    _attach(js);
     _loadFromSettings();
 }
 

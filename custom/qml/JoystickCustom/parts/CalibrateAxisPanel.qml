@@ -47,8 +47,19 @@ QGCGroupBox {
         axisPickLabels = out
     }
 
-    Component.onCompleted: _rebuildAxisPickLabels()
-    onAxisRouterChanged: _rebuildAxisPickLabels()
+    // ── Joystick wiring ────────────────────────────────────────────────────
+    function _wireJoystick() {
+        if (axisRouter && axisRouter.setJoystick)
+            axisRouter.setJoystick(activeJoystick)
+    }
+
+    Component.onCompleted: {
+        _wireJoystick()
+        _rebuildAxisPickLabels()
+    }
+
+    onActiveJoystickChanged: _wireJoystick()
+    onAxisRouterChanged:     { _wireJoystick(); _rebuildAxisPickLabels() }
 
     Connections {
         target: axisRouter

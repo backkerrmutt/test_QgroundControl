@@ -52,6 +52,68 @@ void AxisActionRouter::setActionForAxis(int axis, int posIndex, const QString& a
     _updateRepeatTimerRunning();
 }
 
+// -----------------------------------------------------
+// ฟังก์ชันสำหรับ UI ของ Servo Control
+// -----------------------------------------------------
+int AxisActionRouter::servoIdForAxis(int axis, int posIndex) const
+{
+    for (const auto& m : _stored) {
+        if (m.axis == axis) {
+            if (posIndex >= 0 && posIndex < m.servoIds.size()) return m.servoIds[posIndex];
+        }
+    }
+    return 9; // ค่า Default
+}
+
+void AxisActionRouter::setServoIdForAxis(int axis, int posIndex, int id)
+{
+    if (posIndex < 0) return;
+    StoredMapping* m = _findMapping(axis);
+    if (!m) return;
+
+    const int positions = _positionsCount(m->centers, m->thresholds);
+    while (m->servoIds.size() < positions) m->servoIds.push_back(9);
+    if (m->servoIds.size() > positions) m->servoIds = m->servoIds.mid(0, positions);
+
+    if (posIndex >= m->servoIds.size()) return;
+    if (m->servoIds[posIndex] == id) return;
+
+    m->servoIds[posIndex] = id;
+    _saveToSettings();
+    // ใช้ signal เฉพาะเพื่อไม่ให้ QML recompute actionCombo.currentIndex
+    emit servoParamsChanged(axis, posIndex);
+}
+
+int AxisActionRouter::servoPwmForAxis(int axis, int posIndex) const
+{
+    for (const auto& m : _stored) {
+        if (m.axis == axis) {
+            if (posIndex >= 0 && posIndex < m.servoPwms.size()) return m.servoPwms[posIndex];
+        }
+    }
+    return 1500; // ค่า Default PWM
+}
+
+void AxisActionRouter::setServoPwmForAxis(int axis, int posIndex, int pwm)
+{
+    if (posIndex < 0) return;
+    StoredMapping* m = _findMapping(axis);
+    if (!m) return;
+
+    const int positions = _positionsCount(m->centers, m->thresholds);
+    while (m->servoPwms.size() < positions) m->servoPwms.push_back(1500);
+    if (m->servoPwms.size() > positions) m->servoPwms = m->servoPwms.mid(0, positions);
+
+    if (posIndex >= m->servoPwms.size()) return;
+    if (m->servoPwms[posIndex] == pwm) return;
+
+    m->servoPwms[posIndex] = pwm;
+    _saveToSettings();
+    // ใช้ signal เฉพาะเพื่อไม่ให้ QML recompute actionCombo.currentIndex
+    emit servoParamsChanged(axis, posIndex);
+}
+// -----------------------------------------------------
+
 QVariantList AxisActionRouter::mappedAxes() const
 {
     return _mappedAxesOrdered();
@@ -178,18 +240,35 @@ void AxisActionRouter::_applyMappingToUiForAxis(int axis)
     emit calibrationChanged();
 }
 
+// ✅ แก้บัค: สั่งให้เคลียร์ชื่อแกน และรีเซ็ต UI ให้กลับเป็น Default เมื่อกด Remove
 void AxisActionRouter::removeMapping(int axis)
 {
+    bool found = false;
     for (int i = 0; i < _stored.size(); ++i) {
         if (_stored[i].axis == axis) {
             _stored.removeAt(i);
-            _normalizeCardOrder();
-            _rebuildSummaries();
-            emit mappingsChanged();
-            _saveToSettings();
-            _updateRepeatTimerRunning();
-            return;
+            found = true;
+            break;
         }
+    }
+
+    if (found) {
+        // 1. ลบชื่อ Custom Name (เช่น คำว่า TEST) เพื่อให้กลับไปเป็นชื่อปกติ (Axis X)
+        if (_axisNames.contains(axis)) {
+            _axisNames.remove(axis);
+        }
+
+        _normalizeCardOrder();
+        _rebuildSummaries();
+
+                // 2. ถ้านี่คือแกนที่กำลังถูกเปิดค้างไว้ในหน้าจอซ้ายมือ (Calibration) ให้รีเซ็ตค่า UI คืนด้วย
+        if (axis == _selectedAxis) {
+            _applyMappingToUiForAxis(axis);
+        }
+
+        emit mappingsChanged();
+        _saveToSettings();
+        _updateRepeatTimerRunning();
     }
 }
 
@@ -198,6 +277,11 @@ void AxisActionRouter::clearAllMappings()
     _stored.clear();
     _mappingSummaries.clear();
     _cardOrderAxes.clear();
+
+            // เคลียร์ชื่อและ UI ทั้งหมด
+    _axisNames.clear();
+    _applyMappingToUiForAxis(_selectedAxis);
+
     emit mappingsChanged();
     _saveToSettings();
     _updateRepeatTimerRunning();
@@ -212,10 +296,10 @@ void AxisActionRouter::_rebuildSummaries()
         QStringList tStr; for (float t : m.thresholds) tStr << QString::number(t, 'f', 3);
 
         _mappingSummaries << QString("Axis %1: %2-pos  centers=[%3]  thresholds=[%4]  actions=[%5]")
-            .arg(m.axis)
-            .arg(_positionsCount(m.centers, m.thresholds))
-            .arg(cStr.join(", "))
-            .arg(tStr.join(", "))
-            .arg(m.actions.join(", "));
+                                 .arg(m.axis)
+                                 .arg(_positionsCount(m.centers, m.thresholds))
+                                 .arg(cStr.join(", "))
+                                 .arg(tStr.join(", "))
+                                 .arg(m.actions.join(", "));
     }
 }

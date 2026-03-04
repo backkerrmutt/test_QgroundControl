@@ -74,6 +74,8 @@ void AxisActionRouter::stopCalibration()
         if (nm.actions.size() > positionsNew)    nm.actions = nm.actions.mid(0, positionsNew);
 
         nm.repeats = QVector<bool>(positionsNew, false);
+        nm.servoIds = QVector<int>(positionsNew, 9);
+        nm.servoPwms = QVector<int>(positionsNew, 1500);
 
         nm.stableIndex = -999;
         nm.pendingIndex = -999;
@@ -85,6 +87,8 @@ void AxisActionRouter::stopCalibration()
     } else {
         const QStringList oldActions = m->actions;
         const QVector<bool> oldRepeats = m->repeats;
+        const QVector<int> oldServoIds = m->servoIds;
+        const QVector<int> oldServoPwms = m->servoPwms;
 
         m->centers    = _calCenters;
         m->thresholds = _calThresholds;
@@ -96,6 +100,14 @@ void AxisActionRouter::stopCalibration()
         m->repeats = oldRepeats;
         while (m->repeats.size() < positionsNew) m->repeats.push_back(false);
         if (m->repeats.size() > positionsNew)    m->repeats = m->repeats.mid(0, positionsNew);
+
+        m->servoIds = oldServoIds;
+        while (m->servoIds.size() < positionsNew) m->servoIds.push_back(9);
+        if (m->servoIds.size() > positionsNew)    m->servoIds = m->servoIds.mid(0, positionsNew);
+
+        m->servoPwms = oldServoPwms;
+        while (m->servoPwms.size() < positionsNew) m->servoPwms.push_back(1500);
+        if (m->servoPwms.size() > positionsNew)    m->servoPwms = m->servoPwms.mid(0, positionsNew);
 
         m->stableIndex = -999;
         m->pendingIndex = -999;
@@ -178,11 +190,11 @@ void AxisActionRouter::_calibFeed(float v, qint64 nowMs)
 
     if (_desiredPositions > 0) {
         _calHint = tr("Captured %1/%2 stable position(s). Move to the next position and pause.")
-            .arg(_stableSamples.size())
+        .arg(_stableSamples.size())
             .arg(_desiredPositions);
     } else {
         _calHint = tr("Captured %1 stable position(s). Move to the next position and pause.")
-            .arg(_stableSamples.size());
+        .arg(_stableSamples.size());
     }
     emit calibrationChanged();
 }

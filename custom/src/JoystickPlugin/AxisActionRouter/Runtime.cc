@@ -59,18 +59,17 @@ void AxisActionRouter::_onAxisValueChanged(int axis, int value)
         if (m.axis != axis) continue;
         if (m.centers.isEmpty()) continue;
 
-        // --- FIX: single-position mapping should be active only near calibrated center
         int idxRaw = -1;
         const int posCount = _positionsCount(m.centers, m.thresholds);
 
         if (posCount == 1 && m.centers.size() == 1) {
-            constexpr float kSinglePosEps = 0.20f; // tune if needed (0.15..0.25)
+            constexpr float kSinglePosEps = 0.20f;
             const float c = m.centers[0];
             idxRaw = (qAbs(v - c) <= kSinglePosEps) ? 0 : -1;
         } else {
             idxRaw = m.thresholds.isEmpty()
-                         ? _nearestCenterIndex(v, m.centers)
-                         : _indexFromThresholds(v, m.thresholds);
+            ? _nearestCenterIndex(v, m.centers)
+            : _indexFromThresholds(v, m.thresholds);
         }
 
         const int prevStable = m.stableIndex;
@@ -118,7 +117,13 @@ void AxisActionRouter::_onAxisValueChanged(int axis, int value)
                 ? _normalizeStored(m.actions[idxRaw])
                 : QStringLiteral("No Action");
 
-        _triggerAction(action);
+                // ดึงค่า Servo ที่ตั้งไว้มาส่งด้วย
+        int sId = 9;
+        int sPwm = 1500;
+        if (idxRaw >= 0 && idxRaw < m.servoIds.size()) sId = m.servoIds[idxRaw];
+        if (idxRaw >= 0 && idxRaw < m.servoPwms.size()) sPwm = m.servoPwms[idxRaw];
+
+        _triggerAction(action, sId, sPwm);
     }
 }
 

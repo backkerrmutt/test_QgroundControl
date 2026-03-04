@@ -77,6 +77,14 @@ void AxisActionRouter::_saveToSettings() const
         for (bool r : m.repeats) rep.append(r);
         o["repeat"] = rep;
 
+        QJsonArray sIds;
+        for (int v : m.servoIds) sIds.append(v);
+        o["servoIds"] = sIds;
+
+        QJsonArray sPwms;
+        for (int v : m.servoPwms) sPwms.append(v);
+        o["servoPwms"] = sPwms;
+
         maps.append(o);
     }
     root["maps"] = maps;
@@ -182,6 +190,8 @@ void AxisActionRouter::_loadFromSettings()
         for (const QJsonValue& x : o.value("thresholds").toArray()) m.thresholds.append(float(x.toDouble()));
         for (const QJsonValue& x : o.value("actions").toArray())    m.actions.append(_normalizeStored(x.toString()));
         for (const QJsonValue& x : o.value("repeat").toArray())     m.repeats.append(x.toBool(false));
+        for (const QJsonValue& x : o.value("servoIds").toArray())   m.servoIds.append(x.toInt(9));
+        for (const QJsonValue& x : o.value("servoPwms").toArray())  m.servoPwms.append(x.toInt(1500));
 
         const int positions = _positionsCount(m.centers, m.thresholds);
 
@@ -190,6 +200,12 @@ void AxisActionRouter::_loadFromSettings()
 
         while (m.repeats.size() < positions) m.repeats.push_back(false);
         if (m.repeats.size() > positions)    m.repeats = m.repeats.mid(0, positions);
+
+        while (m.servoIds.size() < positions) m.servoIds.push_back(9);
+        if (m.servoIds.size() > positions)    m.servoIds = m.servoIds.mid(0, positions);
+
+        while (m.servoPwms.size() < positions) m.servoPwms.push_back(1500);
+        if (m.servoPwms.size() > positions)    m.servoPwms = m.servoPwms.mid(0, positions);
 
         m.stableIndex = -999;
         m.pendingIndex = -999;

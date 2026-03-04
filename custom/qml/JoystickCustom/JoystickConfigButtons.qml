@@ -1,10 +1,3 @@
-/****************************************************************************
- *
- * JoystickConfigButtons.qml (Custom-ready, split)
- * ✅ Ghost Drag Preview + Profile Export/Import
- *
- ****************************************************************************/
-
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
@@ -26,12 +19,11 @@ ColumnLayout {
     height: availableHeight
     spacing: 0
 
-    // injected from JoystickConfig.qml loader
     property var _activeJoystick: null
     property var injectedAxisRouter: null
 
     QGCPalette { id: qgcPal; colorGroupEnabled: root.enabled }
-    JoystickConfigController { id: controller } // core controller (parameterExists, facts, etc.)
+    JoystickConfigController { id: controller }
 
     property var  activeJoystick: _activeJoystick
     property var  axisRouter: (injectedAxisRouter ? injectedAxisRouter
@@ -42,9 +34,6 @@ ColumnLayout {
 
     property int _maxButtons: 64
 
-    // -----------------------------
-    // Axis label + active position cache
-    // -----------------------------
     property int _axisLabelTick: 0
     function _axisLabel(ax) {
         _axisLabelTick
@@ -91,7 +80,6 @@ ColumnLayout {
         _refreshActivePosSnapshot()
     }
 
-    // Action model (append flight modes)
     function _actionModelWithFlightModes() {
         var base = (activeJoystick && activeJoystick.assignableActionTitles) ? activeJoystick.assignableActionTitles : []
         var modes = (axisRouter && axisRouter.allFlightModes) ? axisRouter.allFlightModes() : []
@@ -100,6 +88,10 @@ ColumnLayout {
         for (var j=0; j<modes.length; j++) {
             if (out.indexOf(modes[j]) < 0) out.push(modes[j])
         }
+
+        if (out.indexOf("Servo Control") < 0) out.push("Servo Control")
+        if (out.indexOf("Deploy Airbag") < 0) out.push("Deploy Airbag")
+
         return out
     }
 
@@ -157,15 +149,11 @@ ColumnLayout {
         }
     }
 
-    // -----------------------------
-    // Shared dialogs/components (split out)
-    // -----------------------------
     Parts.ProfileDialogs {
         id: profileDialogs
         axisRouter: root.axisRouter
         onImportedOk: {
             Qt.callLater(root._refreshActivePosSnapshot)
-            // Axis panel will also re-sync via mappingsChanged, but force is ok
             Qt.callLater(axisPanel.forceResync)
         }
     }
@@ -180,15 +168,11 @@ ColumnLayout {
         }
     }
 
-    // Provider object to avoid child touching root internals
     QtObject {
         id: activePosProvider
         function get(axisNum) { return root._getActivePos(axisNum) }
     }
 
-    // =========================
-    // Scroll container
-    // =========================
     QGCFlickable {
         id: vScroll
         Layout.fillWidth: true
@@ -203,9 +187,6 @@ ColumnLayout {
             width: vScroll.width
             spacing: ScreenTools.defaultFontPixelHeight
 
-            // =========================
-            // Standard Button Assignment
-            // =========================
             ColumnLayout {
                 id: flowColumn
                 Layout.fillWidth: true
@@ -258,7 +239,14 @@ ColumnLayout {
 
                                 function _findCurrentButtonAction() {
                                     if (activeJoystick) {
-                                        var i = find(activeJoystick.buttonActions[modelData])
+                                        var actionName = activeJoystick.buttonActions[modelData]
+                                        var currentModel = buttonActionCombo.model
+                                        var i = -1
+                                        for (var k = 0; k < currentModel.length; k++) {
+                                            if (String(currentModel[k]).toLowerCase() === String(actionName).toLowerCase()) {
+                                                i = k; break;
+                                            }
+                                        }
                                         if (i < 0) i = 0
                                         currentIndex = i
                                     }
@@ -284,9 +272,6 @@ ColumnLayout {
                 }
             }
 
-            // =========================
-            // Firmware JS Buttons
-            // =========================
             Column {
                 id: buttonCol
                 width: parent.width
@@ -375,9 +360,6 @@ ColumnLayout {
             Item { Layout.fillWidth: true; height: ScreenTools.defaultFontPixelHeight }
             Rectangle { Layout.fillWidth: true; height: 1; color: qgcPal.text; opacity: 0.2 }
 
-            // =========================
-            // Axis -> Virtual Buttons section (split)
-            // =========================
             GridLayout {
                 id: axisSection
                 Layout.fillWidth: true
