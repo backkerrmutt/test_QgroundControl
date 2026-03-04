@@ -32,7 +32,7 @@
     <qresource prefix="/qml">
         <file alias="QGroundControl/FlightDisplay/CustomGuidedActionsController.qml">src/CustomGuidedActionsController.qml</file>
         <file alias="QGroundControl/FlightDisplay/FlyViewCustomLayer.qml">src/FlyViewCustomLayer.qml</file>
-        <file alias="QGroundControl/FlightDisplay/FlyViewToolStripActionList.qml">src/FlyViewToolStripActionList.qml</file>     
+        <file alias="QGroundControl/FlightDisplay/FlyViewToolStripActionList.qml">src/FlyViewToolStripActionList.qml</file>
     </qresource>
     <qresource prefix="/res">
         <file alias="QGCLogoFull.svg">res/QGCLogoFull.svg</file>
@@ -42,5 +42,19 @@
         <file alias="JoystickConfig.qml">qml/JoystickCustom/JoystickConfig.qml</file>
         <file alias="JoystickConfigButtons.qml">qml/JoystickCustom/JoystickConfigButtons.qml</file>
 <!--        <file alias="QGroundControl/Controls/FlightModeIndicator.qml">qml/UI/toolbar/FlightModeIndicator_custom.qml</file>-->
+    </qresource>
+    <qresource prefix="/qml">
+
+      <!-- Override pages that QGC actually loads -->
+      <file alias="JoystickConfig.qml">qml/JoystickCustom/JoystickConfig.qml</file>
+      <file alias="JoystickConfigButtons.qml">qml/JoystickCustom/JoystickConfigButtons.qml</file>
+
+      <!-- Split parts -->
+      <file alias="JoystickCustom/parts/AxisVirtualButtonsPanel.qml">qml/JoystickCustom/parts/AxisVirtualButtonsPanel.qml</file>
+      <file alias="JoystickCustom/parts/CalibrateAxisPanel.qml">qml/JoystickCustom/parts/CalibrateAxisPanel.qml</file>
+      <file alias="JoystickCustom/parts/ProfileDialogs.qml">qml/JoystickCustom/parts/ProfileDialogs.qml</file>
+      <file alias="JoystickCustom/parts/RemoveConfirmDialog.qml">qml/JoystickCustom/parts/RemoveConfirmDialog.qml</file>
+      <file alias="JoystickCustom/parts/ActionUtils.js">qml/JoystickCustom/parts/ActionUtils.js</file>
+      
     </qresource>
 </RCC>

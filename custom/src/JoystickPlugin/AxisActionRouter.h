@@ -9,10 +9,15 @@
 #include <QtCore/QPointer>
 #include <QtCore/QUrl>
 #include <QtCore/QTimer>
+#include <QtCore/QLoggingCategory>
+#include "Joystick.h"
+
 
 class QAction;
 class Vehicle;
 class Joystick;
+
+Q_DECLARE_LOGGING_CATEGORY(AxisActLog)
 
 class AxisActionRouter : public QObject
 {
@@ -36,7 +41,7 @@ class AxisActionRouter : public QObject
 
     Q_PROPERTY(QStringList mappingSummaries READ mappingSummaries NOTIFY mappingsChanged)
 
-   public:
+public:
     explicit AxisActionRouter(QObject* parent = nullptr);
 
     Q_INVOKABLE void setJoystick(QObject* joystickObj);
@@ -56,7 +61,7 @@ class AxisActionRouter : public QObject
     Q_INVOKABLE QVariantList cardOrder() const;
     Q_INVOKABLE void setCardOrder(const QVariantList& order);
 
-            // Profile export/import
+    // Profile export/import
     Q_INVOKABLE QString exportProfileJson() const;
     Q_INVOKABLE QString importProfileJson(const QString& jsonText);
 
@@ -103,7 +108,7 @@ class AxisActionRouter : public QObject
     Q_INVOKABLE bool repeatForAxis(int axis, int posIndex) const;
     Q_INVOKABLE void setRepeatForAxis(int axis, int posIndex, bool enabled);
 
-   signals:
+signals:
     void axisListChanged();
     void selectedAxisChanged();
     void selectedAxisValueChanged();
@@ -119,11 +124,11 @@ class AxisActionRouter : public QObject
     void requestTriggerQgcAction(const QString& actionTitle);
     void axisActivePosChanged(int axis, int pos);
 
-   private slots:
+private slots:
     void _onAxisValueChanged(int axis, int value);
     void _onRepeatTick();
 
-   private:
+private:
     struct StoredMapping {
         int axis = -1;
         QVector<float> centers;
@@ -136,8 +141,6 @@ class AxisActionRouter : public QObject
         qint64 lastFireMs     = 0;
         QVector<bool> repeats;
         qint64 lastRepeatMs = 0;
-
-        // NOTE: keep this struct closed properly (missing brace will break moc/compile)
     };
 
     void _attach(Joystick* js);
@@ -174,9 +177,9 @@ class AxisActionRouter : public QObject
 
     static QString _fileUrlToLocalPath(const QUrl& url);
 
-   private:
+private:
     QPointer<Vehicle> _vehicle;
-    Joystick* _js = nullptr;
+    QPointer<Joystick> _js;
 
     QStringList _axisList;
     int   _selectedAxis     = 0;
@@ -214,7 +217,7 @@ class AxisActionRouter : public QObject
     QTimer _repeatTimer;
     int    _repeatIntervalMs = 150;
 
-   private:
+private:
     void _updateRepeatTimerRunning();
     bool _actionTitleCanRepeat(const QString& actionTitle) const;
     bool _isVehicleFlightModeTitle(const QString& modeTitle) const;

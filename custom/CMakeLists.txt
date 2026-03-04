@@ -86,18 +86,30 @@ message(STATUS "Adding Custom JoystickPlugin Support")
 
 # เพิ่ม Joystick sources
 list(APPEND CUSTOM_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter.h
+    # ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter.cc
+    # ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickConfigController.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickConfigController.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickHandler.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/CustomJoystickHandler.h
 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouterCommon.h
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter/Core.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter/Runtime.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter/Calibration.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter/MappingUi.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter/Persistence.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter/ProfileIO.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter/Actions.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/AxisActionRouter/Repeat.cc
 )
 
 # เพิ่ม Joystick directory
 list(APPEND CUSTOM_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin
+    # ${CMAKE_CURRENT_SOURCE_DIR}/src/JoystickPlugin/JoystickPlugin
 )
 
 # อัพเดท cache
