@@ -39,16 +39,22 @@ void AxisActionRouter::setDesiredPositions(int v)
 
 void AxisActionRouter::setJoystick(QObject* joystickObj)
 {
-    Joystick* js = qobject_cast<Joystick*>(joystickObj);
+    Joystick* js = joystickObj ? qobject_cast<Joystick*>(joystickObj) : nullptr;
+
+            // Guard: null joystickObj means "no joystick" — that's valid
+            // But non-null that fails cast means wrong type — treat as null
+    if (joystickObj && !js) {
+        qCWarning(AxisActLog) << "setJoystick: object is not a Joystick*," << joystickObj->metaObject()->className();
+    }
+
     if (js == _js.data()) return;
 
-            // ① บันทึก settings ของ joystick เก่าก่อน detach
+            // ① Save current joystick data before switching
     _saveToSettings();
     _detach();
 
-            // ② ตั้งค่า key ของ joystick ใหม่ก่อน attach เพื่อให้
-            //    destroyed-signal ที่อาจ clear _jsKey ไม่ทำให้ key หาย
-            //    และ _loadFromSettings() จะใช้ key ที่ถูกต้องทันที
+            // ② Set new key BEFORE attach so _loadFromSettings uses the correct key
+            //    (and the destroyed-signal lambda can't race-clear it)
     _jsKey = _makeJoystickKey(js);
 
     _attach(js);
@@ -81,11 +87,17 @@ void AxisActionRouter::_attach(Joystick* js)
             Qt::QueuedConnection);
 
     connect(_js, &QObject::destroyed, this, [this](QObject*) {
-        // IMPORTANT: clear pointer immediately to avoid use-after-free in queued axis events
+        // Joy object is being destroyed — handle cleanup carefully to avoid use-after-free
         _saveToSettings();
-        _js = nullptr;
-        _detach();
         _jsKey.clear();
+        // Disconnect signals BEFORE nulling _js (otherwise disconnect(null) is a no-op)
+        if (_js) disconnect(_js, nullptr, this, nullptr);
+        _js = nullptr;
+        // Manual inline detach (can't call _detach() because it checks _js which is now null)
+        _lastAxisNorm.clear();
+        _lastAutoPickMs = 0;
+        _lastAutoAxis   = -1;
+        _rebuildAxisList();
         emit mappingsChanged();
     }, Qt::DirectConnection);
 }

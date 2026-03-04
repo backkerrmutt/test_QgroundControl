@@ -24,26 +24,47 @@ static QStringList _candidateKeysForLoad(Joystick* js)
     QStringList keys;
     if (!js) return keys;
 
-            // New stable key (name-only)
-    const QString name = _safeKeyPart(js->name());
+    const QString name      = _safeKeyPart(js->name());
+    const QString safeName  = name.isEmpty() ? QStringLiteral("unknown") : name;
+    const int     axisCount = js->axisCount();
+    const int     btnCount  = js->totalButtonCount();
+
+    const char* guidProps[] = { "guid", "deviceGuid", "deviceUID", "uid", "deviceId" };
+
+            // ① GUID-based key — most specific
+    for (const char* p : guidProps) {
+        const QString id = _propStr(js, p);
+        if (!id.isEmpty() && id != name) {
+            keys << QString("joy:name:%1:guid:%2").arg(safeName, _safeKeyPart(id));
+        }
+    }
+
+            // ② New primary fallback: name + axis count + button count
+            // This is what the updated _makeJoystickKey generates when no GUID is available.
+            // It differentiates two joystick models that share the same display name
+            // but have different hardware capabilities (e.g. 4-axis vs 8-axis).
+    if (axisCount > 0 || btnCount > 0) {
+        keys << QString("joy:name:%1:a%2:b%3").arg(safeName).arg(axisCount).arg(btnCount);
+    }
+
+            // ③ Legacy name-only key (builds that only stored name as key)
     if (!name.isEmpty()) {
         keys << QString("joy:name:%1").arg(name);
     }
 
-            // Legacy id-based keys (older builds)
-    const char* props[] = { "guid", "deviceGuid", "deviceUID", "uid", "deviceId" };
-    for (const char* p : props) {
+            // ④ Older legacy id-only keys (pre-name-key builds)
+    for (const char* p : guidProps) {
         const QString id = _propStr(js, p);
         if (!id.isEmpty()) {
             keys << QString("joy:%1").arg(id);
         }
     }
 
-            // Legacy fallback key that included counts (can change, but try anyway for migration)
+            // ⑤ Oldest legacy pipe-separated key
     keys << QString("joy:%1|a%2|b%3")
                 .arg(js->name())
-                .arg(js->axisCount())
-                .arg(js->totalButtonCount());
+                .arg(axisCount)
+                .arg(btnCount);
 
     keys.removeDuplicates();
     return keys;
@@ -242,9 +263,31 @@ QString AxisActionRouter::_makeJoystickKey(Joystick* js) const
 {
     if (!js) return QString();
 
-            // IMPORTANT: stable key (do NOT include axisCount/buttonCount)
-    const QString name = _safeKeyPart(js->name());
-    if (name.isEmpty()) return QStringLiteral("joy:name:unknown");
+    const QString name      = _safeKeyPart(js->name());
+    const QString safeName  = name.isEmpty() ? QStringLiteral("unknown") : name;
+    const int     axisCount = js->axisCount();
+    const int     btnCount  = js->totalButtonCount();
 
-    return QString("joy:name:%1").arg(name);
+            // ① GUID-based key — most reliable, uniquely identifies physical hardware.
+            // Try multiple property names that different QGC builds may expose.
+    const char* guidProps[] = { "guid", "deviceGuid", "deviceUID", "uid", "deviceId", nullptr };
+    for (const char** p = guidProps; *p; ++p) {
+        const QString id = _propStr(js, *p);
+        if (!id.isEmpty() && id != name) {
+            return QStringLiteral("joy:name:%1:guid:%2").arg(safeName, _safeKeyPart(id));
+        }
+    }
+
+            // ② Fallback: name + axis count + button count.
+            // This differentiates two joystick models that share the same display name
+            // but have different hardware capabilities (e.g. 4-axis vs 8-axis controller).
+            // Note: two physically identical joysticks connected simultaneously will still
+            // collide here, but that case is indistinguishable without a GUID.
+    if (axisCount > 0 || btnCount > 0) {
+        return QStringLiteral("joy:name:%1:a%2:b%3").arg(safeName).arg(axisCount).arg(btnCount);
+    }
+
+            // ③ Last resort: name only (preserves backward-compat for joysticks that
+            //    expose neither GUID nor axis/button count).
+    return QStringLiteral("joy:name:%1").arg(safeName);
 }

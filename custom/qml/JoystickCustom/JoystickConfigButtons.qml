@@ -95,7 +95,26 @@ ColumnLayout {
         return out
     }
 
-    Component.onCompleted: Qt.callLater(_syncAxisRouter)
+    Component.onCompleted: {
+        // Init _activeJoystick from joystickManager if parent didn't inject one
+        if (!_activeJoystick && QGroundControl.joystickManager)
+            _activeJoystick = QGroundControl.joystickManager.activeJoystick
+        Qt.callLater(_syncAxisRouter)
+    }
+
+    // ── Track active joystick from QGC's joystickManager ───────────────────
+    // This fires when the user switches joystick from the QGC selector UI
+    Connections {
+        target: (QGroundControl.joystickManager ? QGroundControl.joystickManager : null)
+        ignoreUnknownSignals: true
+        function onActiveJoystickChanged() {
+            root._activeJoystick = QGroundControl.joystickManager.activeJoystick
+        }
+        function onAvailableJoysticksChanged() {
+            if (QGroundControl.joystickManager)
+                root._activeJoystick = QGroundControl.joystickManager.activeJoystick
+        }
+    }
 
     onActiveJoystickChanged: {
         _axisPosMap = ({})
@@ -148,7 +167,6 @@ ColumnLayout {
             if (jsButtonActionRepeater.itemAt(index))  jsButtonActionRepeater.itemAt(index).pressed = pressed
         }
     }
-
     Parts.ProfileDialogs {
         id: profileDialogs
         axisRouter: root.axisRouter
