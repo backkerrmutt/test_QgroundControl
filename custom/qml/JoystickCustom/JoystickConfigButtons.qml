@@ -70,29 +70,30 @@ ColumnLayout {
     }
 
     function _syncAxisRouter() {
-        if (!axisRouter) return
+            if (!axisRouter) return
 
-        axisRouter.setVehicle(globals.activeVehicle)
+            axisRouter.setVehicle(globals.activeVehicle)
 
-        if (joystickAvailable) axisRouter.setJoystick(activeJoystick)
-        else                  axisRouter.setJoystick(null)
+            if (joystickAvailable) axisRouter.setJoystick(activeJoystick)
+            else                  axisRouter.setJoystick(null)
 
-        _refreshActivePosSnapshot()
+            _refreshActivePosSnapshot()
     }
 
-    function _actionModelWithFlightModes() {
-        var base = (activeJoystick && activeJoystick.assignableActionTitles) ? activeJoystick.assignableActionTitles : []
-        var modes = (axisRouter && axisRouter.allFlightModes) ? axisRouter.allFlightModes() : []
-        var out = []
-        for (var i=0; i<base.length; i++) out.push(base[i])
-        for (var j=0; j<modes.length; j++) {
-            if (out.indexOf(modes[j]) < 0) out.push(modes[j])
-        }
+        function _actionModelWithFlightModes() {
+            var base = (activeJoystick && activeJoystick.assignableActionTitles) ? activeJoystick.assignableActionTitles : []
+            var modes = (axisRouter && axisRouter.allFlightModes) ? axisRouter.allFlightModes() : []
+            var out = []
+            for (var i=0; i<base.length; i++) out.push(base[i])
+            for (var j=0; j<modes.length; j++) {
+                if (out.indexOf(modes[j]) < 0) out.push(modes[j])
+            }
 
-        if (out.indexOf("Servo Control") < 0) out.push("Servo Control")
-        if (out.indexOf("Deploy Airbag") < 0) out.push("Deploy Airbag")
+            // เพิ่มรายการคำสั่งใหม่ที่นี่
+            if (out.indexOf("Servo Control") < 0) out.push("Servo Control")
+            if (out.indexOf("Actuator Control") < 0) out.push("Actuator Control") // แทนที่ Deploy Airbag
 
-        return out
+            return out
     }
 
     Component.onCompleted: {

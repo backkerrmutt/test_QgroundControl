@@ -49,23 +49,23 @@ QGCGroupBox {
 
     ListModel { id: axisModel }
 
-    // ── Servo / custom actions that must always appear in the combo model ────
+    // ── Custom actions that must always appear in the combo model ────────────
     // (joystick.assignableActionTitles never includes these)
-    readonly property var _servoActions: ["Servo Control", "Deploy Airbag"]
+    readonly property var _customActions: ["Servo Control", "Actuator Control"]
 
     function _actionModel() {
         var base = actionModelFn ? actionModelFn()
                                  : ((activeJoystick && activeJoystick.assignableActionTitles)
                                     ? activeJoystick.assignableActionTitles : [])
         var out = base.slice()
-        for (var si = 0; si < _servoActions.length; si++) {
+        for (var si = 0; si < _customActions.length; si++) {
             var found = false
             for (var bi = 0; bi < base.length; bi++) {
-                if (String(base[bi]).toLowerCase() === _servoActions[si].toLowerCase()) {
+                if (String(base[bi]).toLowerCase() === _customActions[si].toLowerCase()) {
                     found = true; break
                 }
             }
-            if (!found) out.push(_servoActions[si])
+            if (!found) out.push(_customActions[si])
         }
         return out
     }
@@ -378,7 +378,7 @@ QGCGroupBox {
 
                                     // ╔══════════════════════════════════════════════╗
                                     // ║  ONE delegate per position                   ║
-                                    // ║  Contains: action combo + repeat + servo     ║
+                                    // ║  Contains: action combo + repeat + params    ║
                                     // ╚══════════════════════════════════════════════╝
                                     delegate: ColumnLayout {
                                         id: posRow
@@ -468,24 +468,25 @@ QGCGroupBox {
                                                         axisRouter.setActionForAxis(cell.axisNum, index, t)
                                                         // Force repeat off for non-repeatable actions
                                                         var act = AU.assignableActionAtComboIndex(activeJoystick, i)
-                                                        var isServo = (t === "Servo Control" || t === "Deploy Airbag")
-                                                        if (!isServo && (!act || !act.canRepeat))
+                                                        var isSpecial = (t === "Servo Control" || t === "Actuator Control")
+                                                        if (!isSpecial && (!act || !act.canRepeat))
                                                             axisRouter.setRepeatForAxis(cell.axisNum, index, false)
                                                     }
                                                     background: Rectangle { color: "transparent"; radius: 6 }
                                                 }
                                             }
 
-                                            // Repeat checkbox — inside same RowLayout as combo
+                                            // Repeat checkbox
                                             QGCCheckBox {
+                                                id: repeatCheck
                                                 text: qsTr("Repeat")
                                                 Layout.alignment: Qt.AlignVCenter
 
                                                 readonly property var  _actObj: AU.assignableActionAtComboIndex(
                                                                                     activeJoystick, actionCombo.currentIndex)
-                                                readonly property bool _isServo: actionCombo.currentText === "Servo Control"
-                                                                                 || actionCombo.currentText === "Deploy Airbag"
-                                                enabled: _isServo || (!!_actObj && !!_actObj.canRepeat)
+                                                readonly property bool _isSpecial: actionCombo.currentText === "Servo Control"
+                                                                                   || actionCombo.currentText === "Actuator Control"
+                                                enabled: _isSpecial || (!!_actObj && !!_actObj.canRepeat)
 
                                                 checked: {
                                                     if (!axisRouter) return false
@@ -499,16 +500,17 @@ QGCGroupBox {
                                             }
                                         } // end action RowLayout
 
-                                        // ── Servo settings (per-position) ─────────
+                                        // ── Servo / Actuator parameter row ────────
                                         RowLayout {
                                             id: servoRow
                                             Layout.fillWidth:  true
                                             Layout.leftMargin: ScreenTools.defaultFontPixelWidth * 6
-                                            visible: actionCombo.currentText === "Servo Control"
-                                                     || actionCombo.currentText === "Deploy Airbag"
 
-                                            // Local cache — never binds directly to axisRouter
-                                            // to avoid triggering reactive chain on mappingsChanged
+                                            readonly property bool isServo:    actionCombo.currentText === "Servo Control"
+                                            readonly property bool isActuator: actionCombo.currentText === "Actuator Control"
+                                            visible: isServo || isActuator
+
+                                            // Local cache — avoids triggering reactive chain on mappingsChanged
                                             property int localServoId:  9
                                             property int localServoPwm: 1500
 
@@ -523,17 +525,18 @@ QGCGroupBox {
                                             Connections {
                                                 target: axisRouter
                                                 ignoreUnknownSignals: true
-                                                // servoParamsChanged: fired by setServoIdForAxis / setServoPwmForAxis
                                                 function onServoParamsChanged(changedAxis, changedPos) {
                                                     if (changedAxis !== cell.axisNum || changedPos !== index) return
                                                     servoRow._reload()
                                                 }
-                                                // mappingsChanged: fired after joystick switch + _loadFromSettings
-                                                // Re-read servo params so fields show correct data for new joystick
                                                 function onMappingsChanged() { servoRow._reload() }
                                             }
 
-                                            QGCLabel { text: qsTr("ID:"); font.pointSize: 9; opacity: 0.7 }
+                                            // Label changes based on action type
+                                            QGCLabel {
+                                                text: servoRow.isActuator ? qsTr("Actuator #:") : qsTr("ID:")
+                                                font.pointSize: 9; opacity: 0.7
+                                            }
                                             QGCTextField {
                                                 id: servoIdField
                                                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 5
@@ -549,11 +552,16 @@ QGCGroupBox {
                                                 }
                                             }
 
-                                            QGCLabel { text: qsTr("PWM:"); font.pointSize: 9; opacity: 0.7; Layout.leftMargin: 4 }
+                                            QGCLabel {
+                                                // Servo: PWM µs | Actuator: value 1000–2000 (→ scaled to -1…+1 by C++)
+                                                text: servoRow.isActuator ? qsTr("Value (1000-2000):") : qsTr("PWM:")
+                                                font.pointSize: 9; opacity: 0.7; Layout.leftMargin: 4
+                                            }
                                             QGCTextField {
                                                 id: servoPwmField
                                                 Layout.preferredWidth: ScreenTools.defaultFontPixelWidth * 7
                                                 inputMethodHints: Qt.ImhDigitsOnly
+                                                placeholderText: servoRow.isActuator ? "1500" : "1500"
                                                 onEditingFinished: {
                                                     if (axisRouter)
                                                         axisRouter.setServoPwmForAxis(cell.axisNum, index, Number(text))
@@ -565,18 +573,23 @@ QGCGroupBox {
                                                 }
                                             }
 
-                                            Item { Layout.fillWidth: true }
+                                            // Hint for actuator: 1000=–1, 1500=0, 2000=+1
+                                            QGCLabel {
+                                                text: qsTr("(1000=−1  1500=0  2000=+1)")
+                                                font.pointSize: 8; opacity: 0.5
+                                                visible: servoRow.isActuator
+                                            }
 
+                                            Item { Layout.fillWidth: true }
                                         } // end servoRow RowLayout
 
-                                    } // end posRow ColumnLayout  ← delegate closes HERE
-                                    //  QGCCheckBox and servoRow are INSIDE posRow (above)
+                                    } // end posRow ColumnLayout (delegate)
 
                                 } // end Repeater (positions)
 
                             } // end cardCol ColumnLayout
                         } // end card Rectangle
-                    } // end cell Item
+                    } // end cell Item (delegate)
                 } // end Repeater (cards)
             } // end Flow
 

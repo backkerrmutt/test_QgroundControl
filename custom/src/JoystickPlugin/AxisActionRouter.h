@@ -173,6 +173,7 @@ class AxisActionRouter : public QObject
     void _arm(bool arm);
     void _emergencyStop();
     void _setServo(int id, int pwm);
+    void _setActuator(int index, int rawValue);
 
     StoredMapping* _findMapping(int axis);
     void _applyMappingToUiForAxis(int axis);
